@@ -1,0 +1,113 @@
+erDiagram
+    %% ==========================================
+    %% メインテーブル定義 (Single-Table Design)
+    %% ==========================================
+    InvestmentTable {
+        string PK "Partition Key"
+        string SK "Sort Key"
+        string type "GSI: TypeIndex HASH key"
+        string data "JSON Payload (その他属性)"
+    }
+
+    %% ==========================================
+    %% ニュース記事 + AI分析結果
+    %% ==========================================
+    NEWS_ITEM {
+        string PK "Value: NEWS#{market}  例: NEWS#JP / NEWS#US / NEWS#CN"
+        string SK "Value: TIMESTAMP#UUID  例: 2026-01-15T09:00:00Z#uuid"
+        string type "Value: NEWS"
+        string Title "記事タイトル"
+        string Url "記事URL (重複チェックキー)"
+        string Source "例: nikkei / reuters / xinhua"
+        string Market "JP | US | CN"
+        string Ticker "分析対象銘柄  例: 7203.T / AAPL / 0700.HK"
+        string Action "AI判断: BUY | SELL | HOLD"
+        number Confidence "確信度 0.0 〜 1.0"
+        number Sentiment "感情スコア -1.0 〜 1.0"
+        string Reasoning "AIの判断根拠 (短文)"
+        string ProcessedAt "ISO 8601 処理日時"
+    }
+
+    %% ==========================================
+    %% 取引記録 (市場別)
+    %% ==========================================
+    TRADE_ITEM {
+        string PK "Value: TRADE#{market}  例: TRADE#JP / TRADE#US / TRADE#CN"
+        string SK "Value: TIMESTAMP#ORDER_ID"
+        string type "Value: TRADE"
+        string Market "JP | US | CN"
+        string Ticker "銘柄シンボル  例: 7203.T / AAPL / 0700.HK / 600519.SS"
+        string Exchange "取引所  例: TSE / NYSE / NASDAQ / HKEX / SSE / SZSE"
+        string Side "BUY | SELL"
+        number Quantity "株数 (JP: 単元株に注意)"
+        number Price "約定価格"
+        string Currency "JPY | USD | HKD | CNY"
+        number PriceJPY "JPY換算価格 (比較用)"
+        number Profit "損益 (PnL, 円換算)"
+        string Broker "使用ブローカー  例: kabucom / ibkr / futu / alpaca"
+        string OrderId "ブローカー発行の注文ID"
+        string Status "FILLED | PARTIAL | CANCELLED"
+        boolean PaperTrade "ペーパー取引フラグ"
+    }
+
+    %% ==========================================
+    %% ポートフォリオ残高 (市場別)
+    %% ==========================================
+    BALANCE_ITEM {
+        string PK "Value: BALANCE#{market}  例: BALANCE#JP / BALANCE#US / BALANCE#CN"
+        string SK "Value: LATEST"
+        string type "Value: BALANCE"
+        string Market "JP | US | CN"
+        string Broker "使用ブローカー"
+        number CashBalance "現金残高"
+        string Currency "JPY | USD | HKD"
+        number CashBalanceJPY "JPY換算残高"
+        string UpdatedAt "ISO 8601 更新日時"
+    }
+
+    %% ==========================================
+    %% システム状態 (実行管理)
+    %% ==========================================
+    STATE_ITEM {
+        string PK "Value: STATE"
+        string SK "Value: {market}#LATEST  例: JP#LATEST / US#LATEST / CN#LATEST"
+        string type "Value: STATE"
+        string Market "JP | US | CN"
+        string LastRun "最終実行 ISO 8601"
+        string LastNewsUrl "最後に処理したニュースURL (重複チェック)"
+        string Status "RUNNING | IDLE | ERROR"
+    }
+
+    %% ==========================================
+    %% 価格スナップショット (オプション: 履歴保存)
+    %% ==========================================
+    PRICE_ITEM {
+        string PK "Value: PRICE#{ticker}  例: PRICE#7203.T / PRICE#AAPL"
+        string SK "Value: TIMESTAMP  例: 2026-01-15T09:00:00Z"
+        string type "Value: PRICE"
+        string Ticker "銘柄シンボル"
+        string Market "JP | US | CN"
+        number Open "始値"
+        number High "高値"
+        number Low "安値"
+        number Close "終値"
+        number Volume "出来高"
+        string Currency "JPY | USD | HKD | CNY"
+        string Interval "1m | 5m | 1d"
+    }
+
+    %% ==========================================
+    %% リレーション
+    %% ==========================================
+    InvestmentTable ||--o{ NEWS_ITEM : "PK=NEWS#JP|US|CN"
+    InvestmentTable ||--o{ TRADE_ITEM : "PK=TRADE#JP|US|CN"
+    InvestmentTable ||--o{ BALANCE_ITEM : "PK=BALANCE#JP|US|CN"
+    InvestmentTable ||--o{ STATE_ITEM : "PK=STATE"
+    InvestmentTable ||--o{ PRICE_ITEM : "PK=PRICE#{ticker}"
+
+    %% ==========================================
+    %% GSI: TypeIndex
+    %% HASH: type (NEWS | TRADE | BALANCE | STATE | PRICE)
+    %% RANGE: SK (TIMESTAMP ベースで時系列クエリ可能)
+    %% 用途: 全市場の NEWS を一括取得、全 TRADE を監視ダッシュボードで表示
+    %% ==========================================

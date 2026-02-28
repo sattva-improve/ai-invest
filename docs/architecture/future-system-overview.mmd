@@ -1,0 +1,86 @@
+```mermaid
+graph TD
+    %% AWSクラウド環境
+    subgraph AWS_Cloud ["☁️ AWS Cloud (Serverless)"]
+        direction TB
+
+        %% トリガーとオーケストレーション
+        subgraph Schedulers ["⏰ EventBridge Schedulers (市場別)"]
+            SchedJP["🇯🇵 JPX Scheduler\n(平日 9:00-15:30 JST)"]
+            SchedUS["🇺🇸 NYSE Scheduler\n(平日 23:30-06:00 JST)"]
+            SchedCN["🇨🇳 SSE/SZSE Scheduler\n(平日 10:30-16:00 JST)"]
+        end
+
+        Orchestrator["⚡ AWS Step Functions\n(市場別パイプライン)"]
+
+        %% コンピュート (Lambda)
+        subgraph Lambdas ["Function Layer"]
+            L_FetchNews["λ Fetch News Function\n(RSS / Web scraper)"]
+            L_FetchPrice["λ Fetch Price Function\n(yahoo-finance2 / J-Quants)"]
+            L_Analyze["λ Analyze Function\n(Gemini 2.0 Flash / 2.5 Pro)"]
+            subgraph L_Traders ["λ Trade Functions"]
+                L_TradeJP["λ Trade JP\n(au Kabucom / IBKR)"]
+                L_TradeUS["λ Trade US\n(IBKR / Alpaca)"]
+                L_TradeCN["λ Trade CN\n(Futu OpenAPI)"]
+            end
+        end
+
+        %% データと設定
+        DDB[("🗄️ DynamoDB Global\n(Single-Table)")]
+        SSM["🔐 Systems Manager\n(API Keys per market)"]
+        ElastiCache[("⚡ ElastiCache (Redis)\n(価格キャッシュ / レートリミット)")]
+
+        %% フロー
+        SchedJP -->|"JP市場時間"| Orchestrator
+        SchedUS -->|"US市場時間"| Orchestrator
+        SchedCN -->|"CN市場時間"| Orchestrator
+
+        Orchestrator -->|"Step 1: ニュース取得"| L_FetchNews
+        Orchestrator -->|"Step 2: 価格取得"| L_FetchPrice
+        Orchestrator -->|"Step 3: AI分析"| L_Analyze
+        Orchestrator -->|"Step 4a (JP)"| L_TradeJP
+        Orchestrator -->|"Step 4b (US)"| L_TradeUS
+        Orchestrator -->|"Step 4c (CN)"| L_TradeCN
+
+        %% リソースアクセス
+        Lambdas -->|"SDK"| DDB
+        Lambdas -.->|"Get Config"| SSM
+        L_FetchPrice <-->|"キャッシュ"| ElastiCache
+        L_Traders <-->|"レートリミット"| ElastiCache
+    end
+
+    %% 外部接続 - ニュース
+    subgraph ExtNews ["📡 News Sources"]
+        RSS_JP["日経 / 四季報 RSS"]
+        RSS_US["Bloomberg / Reuters RSS"]
+        RSS_CN["新華社 / 財新 RSS"]
+    end
+
+    %% 外部接続 - マーケットデータ
+    subgraph ExtData ["📊 Market Data"]
+        YahooFin["yahoo-finance2\n(JP 7203.T / US AAPL / HK 0700.HK)"]
+        JQuants["J-Quants API\n(JPX 公式)"]
+    end
+
+    %% 外部接続 - AI
+    ExtAI["🧠 Google Gemini API"]
+
+    %% 外部接続 - ブローカー
+    subgraph ExtBrokers ["🏦 Brokers"]
+        KabucomAPI["au Kabucom API\n(日本株)"]
+        IBKRApi["Interactive Brokers\nClient Portal API\n(JP / US / HK)"]
+        FutuApi["Futu OpenAPI\n(CN A-shares / HK / US)"]
+        AlpacaApi["Alpaca\n(US株 / ペーパー取引)"]
+    end
+
+    L_FetchNews --> ExtNews
+    L_FetchPrice --> YahooFin
+    L_FetchPrice --> JQuants
+    L_Analyze --> ExtAI
+    L_TradeJP --> KabucomAPI
+    L_TradeJP --> IBKRApi
+    L_TradeUS --> IBKRApi
+    L_TradeUS --> AlpacaApi
+    L_TradeCN --> FutuApi
+    L_TradeCN --> IBKRApi
+```

@@ -1,0 +1,85 @@
+graph TD
+    %% ユーザー環境 (LAN内)
+    subgraph Home_Network ["🏠 自宅ネットワーク (Local LAN)"]
+        User["👨‍💻 開発用PC"]
+
+        %% Ubuntuサーバー
+        subgraph Ubuntu ["🖥️ Ubuntu Server (192.168.x.x)"]
+
+            subgraph Docker ["🐳 Docker Environment"]
+                Entry["🏁 Scheduler / Main Process"]
+
+                %% 機能ハンドラー (Lambda-Ready)
+                subgraph Handlers ["Functions (Lambda-Ready)"]
+                    NewsFetcher["📰 News Fetcher\n(RSS / Web Scraper)"]
+                    PriceFetcher["📈 Price Fetcher\n(yahoo-finance2 / J-Quants)"]
+                    Analyzer["🧠 AI Analyzer\n(Gemini)"]
+                    MarketRouter["🔀 Market Router\n(JP / US / CN)"]
+                    subgraph Traders ["Order Executors"]
+                        TraderJP["🇯🇵 JP Trader\n(au Kabucom / SBI)"]
+                        TraderUS["🇺🇸 US Trader\n(IBKR / Alpaca)"]
+                        TraderCN["🇨🇳 CN Trader\n(Futu OpenAPI)"]
+                    end
+                end
+
+                DB[("🗄️ DynamoDB Local")]
+                Cache[("⚡ Redis / Valkey")]
+            end
+        end
+
+        User <-->|"SSH / Browser (直接接続)"| Ubuntu
+    end
+
+    %% 外部インターネット - ニュースソース
+    subgraph NewsFeeds ["📡 News Sources"]
+        NihonKeizai["日本経済新聞 RSS"]
+        Reuters["Reuters JP RSS"]
+        XinhuaNews["新華社 RSS (CN)"]
+        APnews["AP News / Bloomberg RSS (US)"]
+    end
+
+    %% 外部インターネット - マーケットデータ
+    subgraph MarketData ["📊 Market Data APIs"]
+        YahooFinance["yahoo-finance2\n(JP: 7203.T / US: AAPL / HK: 0700.HK)"]
+        JQuants["J-Quants API\n(JPX 公式データ)"]
+    end
+
+    %% 外部インターネット - AI
+    Gemini["🧠 Google Gemini API\n(2.5 Pro / 2.0 Flash)"]
+
+    %% 外部インターネット - 取引所・証券会社
+    subgraph Brokers ["🏦 Brokers / Exchanges"]
+        KabucomAPI["au Kabucom API\n(日本株)"]
+        IBKR["Interactive Brokers\n(US株 / JP株 / HK株)"]
+        FutuAPI["Futu OpenAPI\n(CN A-shares / HK / US)"]
+        AlpacaAPI["Alpaca\n(US株 ペーパー取引)"]
+    end
+
+    %% データフロー
+    NewsFetcher -->|"RSS取得"| NewsFeeds
+    PriceFetcher -->|"株価・OHLCV取得"| YahooFinance
+    PriceFetcher -->|"公式データ (JP)"| JQuants
+    Analyzer -->|"分析依頼"| Gemini
+
+    %% トレーダー → ブローカー
+    TraderJP -->|"注文 (日本株)"| KabucomAPI
+    TraderJP -->|"注文 (JP via IBKR)"| IBKR
+    TraderUS -->|"注文 (US株)"| IBKR
+    TraderUS -->|"ペーパー取引"| AlpacaAPI
+    TraderCN -->|"注文 (CN/HK株)"| FutuAPI
+    TraderCN -->|"注文 (HK via IBKR)"| IBKR
+
+    %% 内部処理フロー
+    Entry --> NewsFetcher
+    Entry --> PriceFetcher
+    NewsFetcher -->|"News Text + 市場判定"| Analyzer
+    PriceFetcher -->|"Price / Indicators"| Analyzer
+    Analyzer -->|"Decision JSON\n{ market, ticker, action, conf }"| MarketRouter
+    MarketRouter -->|"JP"| TraderJP
+    MarketRouter -->|"US"| TraderUS
+    MarketRouter -->|"CN/HK"| TraderCN
+
+    %% DB / Cache接続
+    Handlers -.->|"AWS SDK v3"| DB
+    PriceFetcher -.->|"キャッシュ"| Cache
+    Traders -.->|"レートリミット"| Cache

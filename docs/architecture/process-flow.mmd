@@ -1,0 +1,70 @@
+sequenceDiagram
+    autonumber
+    participant Cron as 🕒 Scheduler
+    participant Fetcher as 📥 News Fetcher
+    participant PriceFetcher as 📈 Price Fetcher
+    participant DB as 🗄️ DynamoDB
+    participant Cache as ⚡ Redis
+    participant AI as 🧠 AI Agent (Gemini)
+    participant Router as 🔀 Market Router
+    participant TraderJP as 🇯🇵 JP Trader
+    participant TraderUS as 🇺🇸 US Trader
+    participant TraderCN as 🇨🇳 CN Trader
+    participant BrokerJP as 🏦 au Kabucom / IBKR
+    participant BrokerUS as 🏦 IBKR / Alpaca
+    participant BrokerCN as 🏦 Futu OpenAPI
+
+    Note over Cron: 定期実行開始 (市場時間に応じてスケジュール)
+
+    Cron->>Fetcher: 実行トリガー (market: JP | US | CN)
+    Cron->>PriceFetcher: 価格データ取得トリガー
+
+    par ニュース取得 & 価格取得 (並列)
+        Fetcher->>DB: 処理済み記事か確認 (Idempotency Check)
+        PriceFetcher->>Cache: キャッシュ確認 (TTL: 5分)
+        alt キャッシュミス
+            PriceFetcher->>BrokerJP: 日本株価格取得 (yahoo-finance2: 7203.T)
+            PriceFetcher->>BrokerUS: 米国株価格取得 (yahoo-finance2: AAPL)
+            PriceFetcher->>BrokerCN: 中国株価格取得 (yahoo-finance2: 0700.HK / 600519.SS)
+            PriceFetcher->>Cache: 価格データをキャッシュ保存
+        end
+    end
+
+    alt 新着記事あり (未処理)
+        Fetcher->>AI: 記事テキスト + 価格データ送信\n{ text, market, priceData }
+        Note over AI: Gemini 2.0 Flash (高頻度分析)\nまたは 2.5 Pro (重要判断)
+        AI-->>Fetcher: JSON { market, ticker, action: "BUY"|"SELL"|"HOLD", conf: 0.0-1.0, currency }
+
+        Fetcher->>DB: 分析結果を保存 (NEWS_ITEM + AI判断ログ)
+
+        opt 確信度(conf) > 0.8
+            Fetcher->>Router: 注文リクエスト引渡し\n{ market: "JP"|"US"|"CN", ticker, action, conf }
+
+            alt market == "JP" (日本株)
+                Router->>TraderJP: JP注文リクエスト
+                TraderJP->>Cache: レートリミット確認
+                TraderJP->>BrokerJP: 残高確認 (au Kabucom / IBKR)
+                TraderJP->>BrokerJP: 注文発行 (株数 / 金額)
+                BrokerJP-->>TraderJP: 注文ID (Order ID)
+                TraderJP->>DB: 取引履歴保存 (TRADE_ITEM, market=JP, currency=JPY)
+            else market == "US" (米国株)
+                Router->>TraderUS: US注文リクエスト
+                TraderUS->>Cache: レートリミット確認
+                TraderUS->>BrokerUS: 残高確認 (IBKR / Alpaca)
+                TraderUS->>BrokerUS: 注文発行 (株数)
+                BrokerUS-->>TraderUS: 注文ID
+                TraderUS->>DB: 取引履歴保存 (TRADE_ITEM, market=US, currency=USD)
+            else market == "CN" (中国株 / HK株)
+                Router->>TraderCN: CN注文リクエスト
+                TraderCN->>Cache: レートリミット確認
+                TraderCN->>BrokerCN: 残高確認 (Futu OpenAPI)
+                TraderCN->>BrokerCN: 注文発行 (株数)
+                BrokerCN-->>TraderCN: 注文ID
+                TraderCN->>DB: 取引履歴保存 (TRADE_ITEM, market=CN, currency=HKD|CNY)
+            end
+        end
+    else 新着なし (既処理 or 市場休場)
+        Fetcher->>Cron: 処理終了 (スキップ)
+    end
+
+    Note over DB: 全取引・分析結果を DynamoDB 単一テーブルで管理\nPK: TRADE#JP / TRADE#US / TRADE#CN

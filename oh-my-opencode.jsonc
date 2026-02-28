@@ -1,0 +1,66 @@
+{
+  "$schema": "https://raw.githubusercontent.com/code-yeongyu/oh-my-opencode/master/assets/oh-my-opencode.schema.json",
+
+  // ============================================================
+  // Agent Model Configuration — GitHub Copilot
+  //
+  // Project: AI-Powered Algorithmic Trading Bot (TypeScript)
+  // Stack:   Vercel AI SDK · Gemini · DynamoDB · Redis · BullMQ
+  // ============================================================
+
+  "agents": {
+    // Sisyphus — Orchestrator (primary agent you chat with)
+    // Uses a capable reasoning model for planning & delegation
+    "sisyphus": {
+      "model": "github-copilot/claude-sonnet-4.6",
+      "fallback_models": ["github-copilot/gpt-4.1"]
+    },
+
+    // Build — Workhorse for implementation tasks
+    // Handles TypeScript, Node.js, DynamoDB, Redis, BullMQ
+    "build": {
+      "model": "github-copilot/claude-sonnet-4.6",
+      "fallback_models": ["github-copilot/gpt-4.1"],
+      "skills": ["git-master"]
+    },
+
+    // Plan — High-IQ planning agent for architecture decisions
+    // Used for phase planning, Lambda migration design, etc.
+    "plan": {
+      "model": "github-copilot/claude-opus-4.6",
+      "fallback_models": ["github-copilot/claude-sonnet-4.6"]
+    },
+
+    // Hephaestus — Fast subagent for quick/trivial tasks
+    // Single-file edits, typo fixes, small config changes
+    "hephaestus": {
+      "model": "github-copilot/claude-haiku-4.5",
+      "fallback_models": ["github-copilot/gpt-4.1"]
+    },
+
+    // Sisyphus-Junior — Category-dispatched subagent
+    // Used by task() calls with category=
+    "sisyphus-junior": {
+      "model": "github-copilot/claude-sonnet-4.6",
+      "fallback_models": ["github-copilot/gpt-4.1"]
+    },
+
+    // Prometheus — Deep planning & research
+    "prometheus": {
+      "model": "github-copilot/claude-opus-4.6",
+      "fallback_models": ["github-copilot/claude-sonnet-4.6"]
+    },
+
+    // Metis — Pre-planning analyst; catches hidden ambiguities
+    "metis": {
+      "model": "github-copilot/claude-opus-4.6",
+      "fallback_models": ["github-copilot/claude-sonnet-4.6"]
+    },
+
+    // Momus — Work-plan reviewer; validates clarity & completeness
+    "momus": {
+      "model": "github-copilot/claude-sonnet-4.6",
+      "fallback_models": ["github-copilot/gpt-4.1"]
+    }
+  }
+}
