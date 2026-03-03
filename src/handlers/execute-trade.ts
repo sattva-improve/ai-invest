@@ -1,7 +1,7 @@
 import type { ScheduledEvent, ScheduledHandler } from "aws-lambda";
 import { RSS_FEEDS } from "../config/rss-feeds.js";
 import { logger } from "../lib/logger.js";
-import { InvestmentDecisionSchema, type InvestmentDecision } from "../schemas/ai.js";
+import { type InvestmentDecision, InvestmentDecisionSchema } from "../schemas/ai.js";
 import { type AppConfig, AppConfigSchema } from "../schemas/config.js";
 import type { OrderRequest } from "../schemas/trade.js";
 import { executeTrade } from "../services/trader.js";
@@ -15,10 +15,10 @@ export interface ExecuteTradeHandlerResult {
 export async function executeTradeHandler(
   decision: InvestmentDecision,
   config: AppConfig,
+  marketPrice?: number,
 ): Promise<ExecuteTradeHandlerResult> {
   const log = logger.child({ handler: "execute-trade" });
 
-  // 信頼度がしきい値以下の場合はスキップ
   if (decision.confidence <= config.confidenceThreshold) {
     log.info(
       {
@@ -31,21 +31,19 @@ export async function executeTradeHandler(
     return { executed: 0, skipped: 1, errors: 0 };
   }
 
-  // HOLD の場合はスキップ
   if (decision.action === "HOLD") {
     log.info({ ticker: decision.ticker }, "Skipping trade — action is HOLD");
     return { executed: 0, skipped: 1, errors: 0 };
   }
 
   try {
-    // 注文数量を計算: maxOrderValueUsd / targetPrice
-    const price = decision.targetPrice ?? 0;
+    const price = marketPrice ?? decision.targetPrice ?? 0;
     const amount = price > 0 ? config.maxOrderValueUsd / price : 0;
 
     if (amount <= 0) {
       log.warn(
-        { ticker: decision.ticker, targetPrice: decision.targetPrice },
-        "Cannot calculate order amount — no valid target price",
+        { ticker: decision.ticker, marketPrice, targetPrice: decision.targetPrice },
+        "Cannot calculate order amount — no valid price",
       );
       return { executed: 0, skipped: 1, errors: 0 };
     }
@@ -54,7 +52,7 @@ export async function executeTradeHandler(
       symbol: decision.ticker,
       side: decision.action === "BUY" ? "buy" : "sell",
       amount,
-      price: decision.targetPrice,
+      price: marketPrice ?? decision.targetPrice,
       type: "market",
     };
 
