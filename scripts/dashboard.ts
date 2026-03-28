@@ -38,6 +38,7 @@ const c = {
 // ─── Helpers ───────────────────────────────────────────────────
 
 function pad(str: string, len: number): string {
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: ANSI escape stripping requires control char
   const stripped = str.replace(/\x1b\[[0-9;]*m/g, "");
   const diff = len - stripped.length;
   return diff > 0 ? str + " ".repeat(diff) : str;
