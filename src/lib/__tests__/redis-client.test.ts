@@ -17,16 +17,20 @@ vi.mock("../../config/env.js", () => ({
     REDIS_URL: "redis://localhost:6379",
     LOG_LEVEL: "silent",
     NODE_ENV: "test",
-    GOOGLE_GENERATIVE_AI_API_KEY: "test-key",
+    GITHUB_COPILOT_TOKEN: "test-token",
   },
 }));
 
-import { closeRedis, getRedisClient, getRedisConnectionOptions } from "../redis-client.js";
+import { closeRedis, getRedisClient, getRedisConnectionOptions, isRedisConfigured } from "../redis-client.js";
 
 describe("redis-client", () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     await closeRedis();
+  });
+
+  it("isRedisConfigured returns true when REDIS_URL is set", () => {
+    expect(isRedisConfigured()).toBe(true);
   });
 
   it("getRedisClient creates singleton instance", () => {
