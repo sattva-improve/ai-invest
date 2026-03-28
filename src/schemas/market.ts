@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 export const MarketDataSchema = z.object({
-  symbol: z.string().describe("Trading symbol, e.g. BTC/USDT"),
+  symbol: z.string().describe("Trading symbol, e.g. ETH/BTC"),
   price: z.number().positive().describe("Current price"),
   rsi: z.number().min(0).max(100).optional().describe("Relative Strength Index (14-period)"),
   volume: z.number().nonnegative().describe("24h trading volume"),
