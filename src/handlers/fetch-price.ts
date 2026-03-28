@@ -1,5 +1,6 @@
 import type { ScheduledEvent, ScheduledHandler } from "aws-lambda";
 import { RSS_FEEDS } from "../config/rss-feeds.js";
+import { TRADING_PAIRS } from "../config/trading-pairs.js";
 import { logger } from "../lib/logger.js";
 import { getCryptoMarketData } from "../providers/crypto-market.js";
 import { getStockMarketData } from "../providers/stock-market.js";
@@ -52,10 +53,7 @@ export async function fetchPriceHandler(config: AppConfig): Promise<FetchPriceHa
 // --- AWS Lambda entry point ---
 const defaultConfig = AppConfigSchema.parse({
   rssFeeds: RSS_FEEDS,
-  tradingPairs: [
-    { symbol: "BTC/USDT", assetType: "crypto", enabled: true },
-    { symbol: "ETH/USDT", assetType: "crypto", enabled: true },
-  ],
+  tradingPairs: TRADING_PAIRS,
 });
 
 export const handler: ScheduledHandler = async (_event: ScheduledEvent) => {

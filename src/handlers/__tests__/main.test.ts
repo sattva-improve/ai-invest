@@ -25,7 +25,7 @@ vi.mock("../../config/env.js", () => ({
   env: {
     LOG_LEVEL: "silent",
     NODE_ENV: "test",
-    GOOGLE_GENERATIVE_AI_API_KEY: "test-key",
+    GITHUB_COPILOT_TOKEN: "test-token",
   },
 }));
 

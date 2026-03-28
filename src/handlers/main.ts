@@ -1,4 +1,5 @@
 import { RSS_FEEDS } from "../config/rss-feeds.js";
+import { TRADING_PAIRS } from "../config/trading-pairs.js";
 import { createFetchNewsWorker } from "../jobs/fetch-news-job.js";
 import { createFetchPriceWorker } from "../jobs/fetch-price-job.js";
 import { setupQueues, teardownQueues } from "../jobs/queue.js";
@@ -12,10 +13,7 @@ const log = logger.child({ handler: "main" });
 // Default config for local execution
 const defaultConfig: AppConfig = AppConfigSchema.parse({
   rssFeeds: RSS_FEEDS,
-  tradingPairs: [
-    { symbol: "BTC/USDT", assetType: "crypto", enabled: true },
-    { symbol: "ETH/USDT", assetType: "crypto", enabled: true },
-  ],
+  tradingPairs: TRADING_PAIRS,
 });
 
 export async function main(): Promise<void> {

@@ -1,6 +1,7 @@
 import type { ScheduledEvent, ScheduledHandler } from "aws-lambda";
 import { env } from "../config/env.js";
 import { RSS_FEEDS } from "../config/rss-feeds.js";
+import { TRADING_PAIRS } from "../config/trading-pairs.js";
 import { logger } from "../lib/logger.js";
 import { getCryptoMarketData } from "../providers/crypto-market.js";
 import { fetchRssFeeds } from "../providers/rss.js";
@@ -16,6 +17,8 @@ export interface FetchNewsHandlerResult {
   skipped: number;
   analyzed: number;
   highConfidence: number;
+  /** 今回未処理の記事数（次回の呼び出しで処理される） */
+  remaining: number;
 }
 
 /** 記事間の待機（API レート制限対策）*/
@@ -35,10 +38,10 @@ export async function fetchNewsHandler(config: AppConfig): Promise<FetchNewsHand
     maxItemsPerFeed: 10,
   });
 
-  // 1サイクルあたり最大5件のみ分析（APIレート制限対策）
-  const MAX_ARTICLES_PER_CYCLE = 5;
+  // 1サイクルあたり最大3件のみ分析（Lambda 60sタイムアウト対策）
+  const MAX_ARTICLES_PER_CYCLE = 3;
   // 記事間の待機時間（ms）: Copilot API制限対策
-  const INTER_ARTICLE_DELAY_MS = 5000;
+  const INTER_ARTICLE_DELAY_MS = 2000;
   log.info({ count: articles.length }, "Articles fetched");
 
   let skipped = 0;
@@ -93,14 +96,15 @@ export async function fetchNewsHandler(config: AppConfig): Promise<FetchNewsHand
     }
   }
 
-  // 最終実行時刻を更新
-  await updateState(0); // Balance は Phase 5 の Trader で更新
+  await updateState(0);
 
+  const remaining = articles.length - skipped - analyzed;
   const result: FetchNewsHandlerResult = {
     processed: articles.length,
     skipped,
     analyzed,
     highConfidence,
+    remaining: Math.max(0, remaining),
   };
 
   log.info(result, "News fetch cycle completed");
@@ -110,10 +114,13 @@ export async function fetchNewsHandler(config: AppConfig): Promise<FetchNewsHand
 // --- AWS Lambda entry point ---
 const defaultConfig = AppConfigSchema.parse({
   rssFeeds: RSS_FEEDS,
-  tradingPairs: [
-    { symbol: "BTC/USDT", assetType: "crypto", enabled: true },
-    { symbol: "ETH/USDT", assetType: "crypto", enabled: true },
-  ],
+  tradingPairs: TRADING_PAIRS,
+  confidenceThreshold: env.CONFIDENCE_THRESHOLD,
+  maxOrderValueBtc: env.MAX_ORDER_VALUE_BTC,
+  maxOrderValueJpy: env.MAX_ORDER_VALUE_JPY,
+  maxLeverage: env.MAX_LEVERAGE,
+  marginMode: env.MARGIN_MODE,
+  enableShortSelling: env.ENABLE_SHORT_SELLING,
 });
 
 export const handler: ScheduledHandler = async (_event: ScheduledEvent) => {

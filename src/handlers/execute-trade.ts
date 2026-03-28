@@ -1,5 +1,7 @@
 import type { ScheduledEvent, ScheduledHandler } from "aws-lambda";
+import { env } from "../config/env.js";
 import { RSS_FEEDS } from "../config/rss-feeds.js";
+import { TRADING_PAIRS } from "../config/trading-pairs.js";
 import { logger } from "../lib/logger.js";
 import { type InvestmentDecision, InvestmentDecisionSchema } from "../schemas/ai.js";
 import { type AppConfig, AppConfigSchema } from "../schemas/config.js";
@@ -19,7 +21,7 @@ export async function executeTradeHandler(
 ): Promise<ExecuteTradeHandlerResult> {
   const log = logger.child({ handler: "execute-trade" });
 
-  if (decision.confidence <= config.confidenceThreshold) {
+  if (decision.confidence < config.confidenceThreshold) {
     log.info(
       {
         ticker: decision.ticker,
@@ -38,7 +40,9 @@ export async function executeTradeHandler(
 
   try {
     const price = marketPrice ?? decision.targetPrice ?? 0;
-    const amount = price > 0 ? config.maxOrderValueUsd / price : 0;
+    const isJpyPair = decision.ticker.endsWith("/JPY");
+    const maxOrderValue = isJpyPair ? config.maxOrderValueJpy : config.maxOrderValueBtc;
+    const amount = price > 0 ? maxOrderValue / price : 0;
 
     if (amount <= 0) {
       log.warn(
@@ -48,12 +52,19 @@ export async function executeTradeHandler(
       return { executed: 0, skipped: 1, errors: 0 };
     }
 
+    // Spot trading only — force long position, no leverage
+    const positionSide: "long" | "short" = "long";
+    const leverage = 1;
+
     const orderRequest: OrderRequest = {
       symbol: decision.ticker,
       side: decision.action === "BUY" ? "buy" : "sell",
+      positionSide,
       amount,
       price: marketPrice ?? decision.targetPrice,
       type: "market",
+      leverage,
+      marginMode: config.marginMode,
     };
 
     const result = await executeTrade(orderRequest, config, decision);
@@ -63,6 +74,8 @@ export async function executeTradeHandler(
         orderId: result.orderId,
         symbol: result.symbol,
         side: result.side,
+        positionSide: result.positionSide,
+        leverage: result.leverage,
         executedPrice: result.executedPrice,
         isPaperTrade: result.isPaperTrade,
       },
@@ -79,10 +92,13 @@ export async function executeTradeHandler(
 // --- AWS Lambda entry point ---
 const defaultConfig = AppConfigSchema.parse({
   rssFeeds: RSS_FEEDS,
-  tradingPairs: [
-    { symbol: "BTC/USDT", assetType: "crypto", enabled: true },
-    { symbol: "ETH/USDT", assetType: "crypto", enabled: true },
-  ],
+  tradingPairs: TRADING_PAIRS,
+  confidenceThreshold: env.CONFIDENCE_THRESHOLD,
+  maxOrderValueBtc: env.MAX_ORDER_VALUE_BTC,
+  maxOrderValueJpy: env.MAX_ORDER_VALUE_JPY,
+  maxLeverage: env.MAX_LEVERAGE,
+  marginMode: env.MARGIN_MODE,
+  enableShortSelling: env.ENABLE_SHORT_SELLING,
 });
 
 export const handler: ScheduledHandler = async (event: ScheduledEvent) => {
