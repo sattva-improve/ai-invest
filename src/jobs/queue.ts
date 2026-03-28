@@ -1,7 +1,6 @@
-import type { ConnectionOptions } from "bullmq";
 import { Queue } from "bullmq";
 import { logger } from "../lib/logger.js";
-import { getRedisClient } from "../lib/redis-client.js";
+import { getRedisConnectionOptions } from "../lib/redis-client.js";
 import type { AppConfig } from "../schemas/config.js";
 import { FETCH_NEWS_QUEUE } from "./fetch-news-job.js";
 import { FETCH_PRICE_QUEUE } from "./fetch-price-job.js";
@@ -12,7 +11,7 @@ export async function setupQueues(config: AppConfig): Promise<{
   newsQueue: Queue;
   priceQueue: Queue;
 }> {
-  const connection = getRedisClient() as ConnectionOptions;
+  const connection = getRedisConnectionOptions();
 
   const newsQueue = new Queue(FETCH_NEWS_QUEUE, { connection });
   const priceQueue = new Queue(FETCH_PRICE_QUEUE, { connection });

@@ -2,6 +2,7 @@ const mockQueueConstructor = vi.fn();
 const mockUpsertJobScheduler = vi.fn();
 const mockClose = vi.fn();
 const mockGetRedisClient = vi.fn();
+const mockGetRedisConnectionOptions = vi.fn();
 
 vi.mock("bullmq", async () => {
   return {
@@ -17,32 +18,38 @@ vi.mock("bullmq", async () => {
 
 vi.mock("../../lib/redis-client.js", () => ({
   getRedisClient: (...args: unknown[]) => mockGetRedisClient(...args),
+  getRedisConnectionOptions: (...args: unknown[]) => mockGetRedisConnectionOptions(...args),
 }));
 
 vi.mock("../../config/env.js", () => ({
   env: {
     LOG_LEVEL: "silent",
     NODE_ENV: "test",
-    GOOGLE_GENERATIVE_AI_API_KEY: "test-key",
+    GITHUB_COPILOT_TOKEN: "test-token",
   },
 }));
 
-import { setupQueues, teardownQueues } from "../queue.js";
 import type { AppConfig } from "../../schemas/config.js";
+import { setupQueues, teardownQueues } from "../queue.js";
 
 const testConfig: AppConfig = {
   rssFeeds: [{ name: "Test", url: "https://example.com/rss", enabled: true }],
-  tradingPairs: [{ symbol: "BTC/USDT", exchange: "binance", assetType: "crypto", enabled: true }],
+  tradingPairs: [{ symbol: "ETH/BTC", exchange: "binance", assetType: "crypto", enabled: true }],
   confidenceThreshold: 0.8,
   fetchIntervalMinutes: 60,
   priceIntervalMinutes: 5,
-  maxOrderValueUsd: 100,
+  maxOrderValueBtc: 0.001,
 };
 
 describe("jobs/queue", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockGetRedisClient.mockReturnValue({});
+    mockGetRedisConnectionOptions.mockReturnValue({
+      host: "localhost",
+      port: 6379,
+      maxRetriesPerRequest: null,
+    });
     mockUpsertJobScheduler.mockResolvedValue(undefined);
     mockClose.mockResolvedValue(undefined);
   });

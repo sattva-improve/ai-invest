@@ -1,8 +1,7 @@
-import type { ConnectionOptions } from "bullmq";
 import { Worker } from "bullmq";
 import { fetchPriceHandler } from "../handlers/fetch-price.js";
 import { logger } from "../lib/logger.js";
-import { getRedisClient } from "../lib/redis-client.js";
+import { getRedisConnectionOptions } from "../lib/redis-client.js";
 import type { AppConfig } from "../schemas/config.js";
 
 export const FETCH_PRICE_QUEUE = "fetch-price";
@@ -19,7 +18,7 @@ export function createFetchPriceWorker(config: AppConfig): Worker {
       return result;
     },
     {
-      connection: getRedisClient() as ConnectionOptions,
+      connection: getRedisConnectionOptions(),
       concurrency: 1,
     },
   );

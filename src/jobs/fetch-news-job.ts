@@ -1,8 +1,7 @@
-import type { ConnectionOptions } from "bullmq";
 import { Worker } from "bullmq";
 import { fetchNewsHandler } from "../handlers/fetch-news.js";
 import { logger } from "../lib/logger.js";
-import { getRedisClient } from "../lib/redis-client.js";
+import { getRedisConnectionOptions } from "../lib/redis-client.js";
 import type { AppConfig } from "../schemas/config.js";
 
 export const FETCH_NEWS_QUEUE = "fetch-news";
@@ -19,7 +18,7 @@ export function createFetchNewsWorker(config: AppConfig): Worker {
       return result;
     },
     {
-      connection: getRedisClient() as ConnectionOptions,
+      connection: getRedisConnectionOptions(),
       concurrency: 1,
     },
   );
