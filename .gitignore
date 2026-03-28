@@ -28,3 +28,9 @@ coverage/
 # Docker volumes
 dynamodb-data/
 redis-data/
+
+# AWS credentials
+credentials
+credentials.*
+*.credentials
+aws-credentials/

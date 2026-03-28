@@ -14,10 +14,11 @@
     "lint": "biome lint .",
     "format": "biome format --write .",
     "check": "biome check --write .",
-    "db:init": "tsx scripts/db-init.ts"
+    "db:init": "tsx scripts/db-init.ts",
+    "dashboard": "DYNAMODB_ENDPOINT= DYNAMODB_TABLE_NAME=InvestmentTable-prod tsx scripts/dashboard.ts"
   },
   "dependencies": {
-    "@ai-sdk/google": "^1.0.0",
+    "@ai-sdk/openai-compatible": "^0.2.0",
     "@aws-sdk/client-dynamodb": "^3.0.0",
     "@aws-sdk/lib-dynamodb": "^3.0.0",
     "@opentelemetry/api": "^1.9.0",
