@@ -5,7 +5,7 @@ sequenceDiagram
     participant PriceFetcher as 📈 Price Fetcher
     participant DB as 🗄️ DynamoDB
     participant Cache as ⚡ Redis
-    participant AI as 🧠 AI Agent (Gemini)
+    participant AI as 🧠 AI Agent (GitHub Copilot Models)
     participant Router as 🔀 Market Router
     participant TraderJP as 🇯🇵 JP Trader
     participant TraderUS as 🇺🇸 US Trader
@@ -32,7 +32,7 @@ sequenceDiagram
 
     alt 新着記事あり (未処理)
         Fetcher->>AI: 記事テキスト + 価格データ送信\n{ text, market, priceData }
-        Note over AI: Gemini 2.0 Flash (高頻度分析)\nまたは 2.5 Pro (重要判断)
+        Note over AI: GitHub Copilot Models API\n(GITHUB_MODEL_ID で指定)
         AI-->>Fetcher: JSON { market, ticker, action: "BUY"|"SELL"|"HOLD", conf: 0.0-1.0, currency }
 
         Fetcher->>DB: 分析結果を保存 (NEWS_ITEM + AI判断ログ)

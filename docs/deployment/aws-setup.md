@@ -59,11 +59,20 @@ aws dynamodb describe-table --table-name InvestmentTable --query "Table.TableSta
 Store all sensitive credentials in SSM Parameter Store as `SecureString`. **Never hardcode API keys.**
 
 ```bash
-# Google AI API Key (for Gemini)
+# ── AI (GitHub Copilot Models API) ────────────────────────────────
+# Uses GitHub Personal Access Token for authentication.
+# Store the token in SSM Parameter Store:
 aws ssm put-parameter \
-  --name "/algo-trade/GOOGLE_GENERATIVE_AI_API_KEY" \
-  --value "YOUR_KEY" \
+  --name "/algo-trade/GITHUB_TOKEN" \
+  --value "ghp_YOUR_GITHUB_PERSONAL_ACCESS_TOKEN" \
   --type SecureString \
+  --region ap-northeast-1
+
+# Optionally store the model ID (default: openai/gpt-4.1):
+aws ssm put-parameter \
+  --name "/algo-trade/GITHUB_MODEL_ID" \
+  --value "openai/gpt-4.1" \
+  --type String \
   --region ap-northeast-1
 
 # ── Japanese Stocks (JP) ─────────────────────────────────────────
@@ -210,7 +219,7 @@ aws lambda create-function \
   --memory-size 256 \
   --region ap-northeast-1
 
-# analyze: AI analysis (Gemini) + market routing
+# analyze: AI analysis (GitHub Copilot Models API) + market routing
 aws lambda create-function \
   --function-name algo-trade-analyze \
   --runtime nodejs22.x \
@@ -434,7 +443,8 @@ Configure these environment variables on each Lambda function. Market-specific t
 | `NODE_ENV` | `production` | Direct | All |
 | `DYNAMODB_TABLE_NAME` | `InvestmentTable` | Direct | All |
 | `DYNAMODB_REGION` | `ap-northeast-1` | Direct | All |
-| `GOOGLE_GENERATIVE_AI_API_KEY` | Gemini API key | SSM | `analyze` |
+| `GITHUB_TOKEN` | GitHub Personal Access Token (`models:read` スコープ) | SSM | `analyze` |
+| `GITHUB_MODEL_ID` | AI モデル ID (default: `openai/gpt-4.1`) | Direct | `analyze` |
 | `CONFIDENCE_THRESHOLD` | `0.8` | Direct | `analyze` |
 | `KABUCOM_API_PASSWORD` | au Kabucom API password | SSM | `trade-jp` |
 | `KABUCOM_ACCOUNT_PASSWORD` | au Kabucom order password | SSM | `trade-jp` |

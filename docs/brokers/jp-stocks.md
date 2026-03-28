@@ -10,7 +10,7 @@
 |---|---|---|---|---|---|---|
 | **au Kabucom API** | REST + WebSocket | ✅ | 要対応 | ❌ | 無料 | ★★☆ |
 | **Interactive Brokers** | REST (Client Portal) | ✅ | 1株から | ✅ | 無料〜 | ★★★ |
-| SBI Neotrade (SBI証券) | REST | ✅ | 要対応 | ❌ | 無料 | ★★★ |
+| **SBI証券 HYPER SBI 2** | REST (localhost) | ✅ | 要対応 | ❌ | 無料 | ★★☆ |
 
 ---
 
@@ -263,20 +263,159 @@ curl -k -X POST https://localhost:5000/v1/api/iserver/secdef/search \
 
 ---
 
-## Option 3: SBI Neotrade（SBI証券）
+## Option 3: SBI証券 HYPER SBI 2 API
 
 ### 概要
-SBI 証券の子会社 SBI ネオトレード証券が提供する REST API。個人投資家向けの国内株専用。
+SBI証券（sbisec.co.jp）が提供する個人投資家向けデスクトップアプリ「HYPER SBI 2」に内蔵された REST API。
+**au Kabucom の kabuステーション® と同様の構成** — デスクトップアプリを経由して `localhost` に接続する。
 
-- **公式サイト**: https://www.sbineotrade.jp/
-- **API ドキュメント**: https://www.sbineotrade.jp/lp/api/
+> ⚠️ **SBI ネオトレード証券（sbineotrade.jp）とは別会社・別 API**
+> SBI グループ内の別子会社です。本セクションは **SBI証券（sbisec.co.jp）の HYPER SBI 2** について説明します。
 
-### 注意事項
-- ドキュメントが限定的で公開範囲が狭い
-- メインの SBI 証券（sbisec.co.jp）とは別会社
-- au Kabucom API と比べて機能が少ない
-- 初期構築コストが高いため、基本的には au Kabucom か IBKR を推奨
+- **公式サイト**: https://www.sbisec.co.jp/
+- **HYPER SBI 2 紹介ページ**: https://go.sbisec.co.jp/lp/lp_hyper_sbi2_211112_feature.html
+- **操作ガイド**: https://search.sbisec.co.jp/v2/popwin/guide/tool/hyper_sbi_2/
 
+### 特徴
+
+| 項目 | 詳細 |
+|------|------|
+| 接続方式 | HYPER SBI 2 起動中のみ `localhost:{port}` 経由で REST API 利用可能 |
+| 対応 OS | Windows / Mac（au kabuステーション® は Windows のみ — SBI の方が有利） |
+| 認証 | HYPER SBI 2 アプリへのログインセッション経由（API キー方式ではない） |
+| 公式 SDK | Python のみ（Node.js / TypeScript 向け公式 SDK・npm パッケージなし） |
+| 対応取引 | 現物取引・信用取引・PTS・SOR |
+| API利用申請 | 要申請（SBI証券口座開設後、HYPER SBI 2 から申請） |
+| 費用 | 無料（SBI証券口座が必要） |
+
+### ⚠️ 重要な制約：サーバー環境では使用不可
+
+HYPER SBI 2 API は **GUI デスクトップアプリが起動していること** を前提とします。
+
+```
+[ HYPER SBI 2 デスクトップアプリ (Windows/Mac) ]
+       ↓ localhost:{port} (REST API)
+[ algo-trade-bot (Node.js) ]  ← ローカル開発専用
+```
+
+このため以下は **不可能**:
+- AWS Lambda / EC2 / Docker コンテナへの直接デプロイ
+- ヘッドレスサーバー（Ubuntu Server 等）での単独動作
+
+**AWS 本番環境への移行が前提のこのプロジェクトでは、au Kabucom API または IBKR を主ブローカーとして推奨します。**
+HYPER SBI 2 は **ローカル開発・検証環境専用** として利用してください。
+
+### セットアップ手順
+
+#### 1. 口座開設
+1. [SBI証券](https://www.sbisec.co.jp/) でオンライン口座開設（無料）
+2. 本人確認書類のアップロード → 審査（数日〜1週間）
+3. 初回入金
+
+#### 2. HYPER SBI 2 のインストール
+1. [HYPER SBI 2 ダウンロードページ](https://go.sbisec.co.jp/lp/lp_hyper_sbi2_211112_download.html) からインストール
+2. Windows または Mac にインストール（どちらも対応）
+3. SBI証券アカウントでログイン
+
+#### 3. API 利用申請
+1. HYPER SBI 2 を起動
+2. メニューから「API 利用申請」を選択し申請
+3. 申請承認後、API が有効化される
+
+#### 4. 環境変数の設定
+```env
+# .env
+SBI_API_URL=http://localhost:18888   # 実際のポートは HYPER SBI 2 の設定を確認
+SBI_API_PASSWORD=your_api_password
+SBI_ACCOUNT_PASSWORD=your_order_password  # 発注用パスワード
+PAPER_TRADE=true                          # 初期は必ず true
+```
+
+> 📌 **ポート番号について**: HYPER SBI 2 のポートは公式ドキュメントに明記されていません。
+> HYPER SBI 2 起動後、アプリ内の「設定」または公式サポートでポート番号を確認してください。
+> （kabuステーション® は `18080` を使用するため、参考値として `18888` を記載しています）
+
+### Node.js コード例
+
+```typescript
+// src/services/traders/sbi-client.ts
+// ⚠️ ローカル開発専用 — HYPER SBI 2 デスクトップアプリ起動中のみ動作
+
+const BASE_URL = process.env.SBI_API_URL ?? 'http://localhost:18888';
+
+// APIトークン取得（kabuステーション® と同様のパターンと想定）
+async function getToken(): Promise<string> {
+  const res = await fetch(`${BASE_URL}/token`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ APIPassword: process.env.SBI_API_PASSWORD }),
+  });
+  if (!res.ok) throw new Error(`SBI token error: ${res.status}`);
+  const data = await res.json() as { Token: string };
+  return data.Token;
+}
+
+// 現物買い注文
+async function placeOrder(params: {
+  ticker: string;   // 例: '7203'（4桁コード、.T なし）
+  quantity: number; // 単元株数
+  price?: number;   // 省略時は成行
+}): Promise<string> {
+  const token = await getToken();
+
+  const body = {
+    Password: process.env.SBI_ACCOUNT_PASSWORD,
+    Symbol: params.ticker,
+    Exchange: 1,         // 1=東証
+    Side: '2',           // '1'=売, '2'=買
+    CashMargin: 1,       // 1=現物
+    Qty: params.quantity,
+    FrontOrderType: params.price ? 20 : 10, // 10=成行, 20=指値
+    Price: params.price ?? 0,
+    ExpireDay: 0,        // 0=当日
+  };
+
+  const res = await fetch(`${BASE_URL}/sendorder`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-API-KEY': token,
+    },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`SBI order error: ${res.status}`);
+  const data = await res.json() as { OrderId: string };
+  return data.OrderId;
+}
+```
+
+> ⚠️ **注意**: 上記コード例は kabuステーション® API の構造を参考にした推定実装です。
+> HYPER SBI 2 の実際のエンドポイント・リクエスト形式は、API 申請承認後に HYPER SBI 2 内の公式ドキュメントで確認してください。
+> 公式 Python SDK のコードを参照すると実際のエンドポイント仕様を確認できます。
+
+### AWS SSM パラメータ（ローカル proxy 経由で使う場合）
+
+```bash
+# AWS SSM Parameter Store（ローカル Proxy サーバー経由で SBI API を公開する構成の場合）
+aws ssm put-parameter --name /algo-trade/SBI_API_PASSWORD \
+  --value 'YOUR_API_PASSWORD' --type SecureString
+aws ssm put-parameter --name /algo-trade/SBI_ACCOUNT_PASSWORD \
+  --value 'YOUR_ORDER_PASSWORD' --type SecureString
+aws ssm put-parameter --name /algo-trade/SBI_API_URL \
+  --value 'http://YOUR_LOCAL_PROXY:18888' --type String
+```
+
+### au Kabucom API との比較
+
+| 比較項目 | HYPER SBI 2 (SBI証券) | au Kabucom API |
+|---------|----------------------|----------------|
+| 対応 OS | Windows / Mac ✅ | Windows のみ ⚠️ |
+| npm パッケージ | なし | なし |
+| 公式 Node.js SDK | なし | なし |
+| AWS Lambda 直接利用 | ❌ 不可 | ❌ 不可 |
+| ドキュメント | 承認後のみ閲覧可 | 公開 (OpenAPI 3.0) |
+| ペーパートレード | ❌ | ❌ |
+| 推奨用途 | ローカル検証 | ローカル本番 |
 ---
 
 ## 銘柄コード (ティッカー) 形式

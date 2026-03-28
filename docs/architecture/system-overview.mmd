@@ -13,7 +13,7 @@ graph TD
                 subgraph Handlers ["Functions (Lambda-Ready)"]
                     NewsFetcher["📰 News Fetcher\n(RSS / Web Scraper)"]
                     PriceFetcher["📈 Price Fetcher\n(yahoo-finance2 / J-Quants)"]
-                    Analyzer["🧠 AI Analyzer\n(Gemini)"]
+                    Analyzer["🧠 AI Analyzer\n(GitHub Copilot Models)"]
                     MarketRouter["🔀 Market Router\n(JP / US / CN)"]
                     subgraph Traders ["Order Executors"]
                         TraderJP["🇯🇵 JP Trader\n(au Kabucom / SBI)"]
@@ -45,7 +45,7 @@ graph TD
     end
 
     %% 外部インターネット - AI
-    Gemini["🧠 Google Gemini API\n(2.5 Pro / 2.0 Flash)"]
+    GitHubModels["🧠 GitHub Copilot\nModels API"]
 
     %% 外部インターネット - 取引所・証券会社
     subgraph Brokers ["🏦 Brokers / Exchanges"]
@@ -59,7 +59,7 @@ graph TD
     NewsFetcher -->|"RSS取得"| NewsFeeds
     PriceFetcher -->|"株価・OHLCV取得"| YahooFinance
     PriceFetcher -->|"公式データ (JP)"| JQuants
-    Analyzer -->|"分析依頼"| Gemini
+    Analyzer -->|"分析依頼"| GitHubModels
 
     %% トレーダー → ブローカー
     TraderJP -->|"注文 (日本株)"| KabucomAPI

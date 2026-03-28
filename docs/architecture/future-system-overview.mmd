@@ -17,7 +17,7 @@ graph TD
         subgraph Lambdas ["Function Layer"]
             L_FetchNews["λ Fetch News Function\n(RSS / Web scraper)"]
             L_FetchPrice["λ Fetch Price Function\n(yahoo-finance2 / J-Quants)"]
-            L_Analyze["λ Analyze Function\n(Gemini 2.0 Flash / 2.5 Pro)"]
+            L_Analyze["λ Analyze Function\n(GitHub Copilot Models API)"]
             subgraph L_Traders ["λ Trade Functions"]
                 L_TradeJP["λ Trade JP\n(au Kabucom / IBKR)"]
                 L_TradeUS["λ Trade US\n(IBKR / Alpaca)"]
@@ -63,7 +63,7 @@ graph TD
     end
 
     %% 外部接続 - AI
-    ExtAI["🧠 Google Gemini API"]
+    ExtAI["🧠 GitHub Copilot\nModels API"]
 
     %% 外部接続 - ブローカー
     subgraph ExtBrokers ["🏦 Brokers"]

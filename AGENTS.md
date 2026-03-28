@@ -1,10 +1,10 @@
 # PROJECT KNOWLEDGE BASE
 
 **Generated:** 2026-02-28
-**Status:** Greenfield — no source code exists yet
+**Status:** Active development
 
 ## OVERVIEW
-AI-powered algorithmic trading bot: RSS feeds + market data → LLM (Gemini) investment decisions → stock/crypto exchange orders.
+AI-powered algorithmic trading bot: RSS feeds + market data → LLM (GitHub Copilot Models API) investment decisions → stock/crypto exchange orders.
 TypeScript/Node.js, Docker-first, AWS Lambda migration path.
 
 **Supported Markets:**
@@ -27,7 +27,7 @@ TypeScript/Node.js, Docker-first, AWS Lambda migration path.
 └── README.md
 ```
 
-**Planned** (not yet created):
+**Source code:**
 ```
 src/
 ├── handlers/         # Lambda/Local entry points (handler pattern)
@@ -87,7 +87,7 @@ Scheduler (market-aware: JP/US/CN trading hours)
 |--------|----------|-------|
 | **au Kabucom API** (推奨) | REST + WebSocket | 個人向けAPIの中で最も充実。kabuステーション経由でローカル接続 |
 | Interactive Brokers (IBKR) | REST (Client Portal API) | 日本株・米国株・香港株を1つのAPIで統一管理可能 |
-| SBI Neotrade | REST | SBI証券子会社。ドキュメントは限定的 |
+| **SBI証券 HYPER SBI 2** | REST (localhost) | Windows/Mac対応。デスクトップアプリ経由。サーバーデプロイ不可—ローカル開発専用 |
 
 ### 🇺🇸 US Stocks (US)
 | Broker | API Type | Notes |
@@ -155,7 +155,7 @@ docker compose up -d  # Start DynamoDB Local + Redis
 
 ## TECH STACK
 - **Runtime**: TypeScript 5.x, Node.js v22
-- **AI**: Vercel AI SDK (`generateObject()`) + Gemini 2.5 Pro (decisions) / 2.0 Flash (high-freq)
+- **AI**: Vercel AI SDK (`generateObject()`) + GitHub Copilot Models API (`@ai-sdk/openai-compatible`, default: `openai/gpt-4.1`)
 - **Validation**: Zod — AI output, DB entities, config all typed
 - **DB**: DynamoDB (single-table) — Local dev → AWS prod
 - **Cache/Queue**: Redis/Valkey (cache + rate limit) + BullMQ (jobs)
@@ -169,7 +169,7 @@ docker compose up -d  # Start DynamoDB Local + Redis
 - **Handler pattern**: All entry points in `handlers/` — zero-change Lambda migration
 - **Repository pattern**: DynamoDB access isolated in `repositories/` only
 - **Market Router**: Routes AI decisions to the correct per-market trader service
-- **Cost-optimized AI**: Flash for frequent calls, Pro for high-confidence decisions only
+- **Single AI model**: GitHub Copilot Models API — configurable via `GITHUB_MODEL_ID`
 - **Idempotency**: Check DynamoDB before processing news (no duplicate orders)
 - **Confidence threshold**: Only place orders when AI confidence > 0.8
 - **Multi-currency**: All trades stored with original currency + JPY-equivalent for unified reporting

@@ -11,6 +11,7 @@
 - Broker setup — Chinese stocks (CN): `docs/brokers/cn-stocks.md`
 - Local runbook: `docs/runbook/local-development.md`
 - Deployment (AWS setup): `docs/deployment/aws-setup.md`
+- Deployment (Migration guide): `docs/deployment/migration-guide.md`
 - Migration guide (Local → AWS): `docs/deployment/migration-guide.md`
 
 ## Recommended reading order
@@ -19,6 +20,7 @@
 3. `docs/database/schema.mmd`
 4. `docs/brokers/jp-stocks.md` / `us-stocks.md` / `cn-stocks.md`
 5. `docs/deployment/aws-setup.md`
+6. `docs/deployment/migration-guide.md`
 
 ## Notes
 - Mermaid `.mmd` files are diagrams. Open them in GitHub or a Mermaid viewer.

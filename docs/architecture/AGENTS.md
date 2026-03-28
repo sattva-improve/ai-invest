@@ -16,7 +16,7 @@ Ubuntu Server
     ├── Scheduler / Main Process
     ├── NewsFetcher   (RSS → Market data)
     ├── PriceFetcher  (ccxt)
-    ├── AI Analyzer   (Gemini API)
+    ├── AI Analyzer   (GitHub Copilot Models API)
     ├── Order Executor (Exchange API)
     └── DynamoDB Local
 ```
@@ -26,7 +26,7 @@ Ubuntu Server
 EventBridge Scheduler
 └── Step Functions Orchestrator
     ├── Step 1: λ Fetch News
-    ├── Step 2: λ Analyze (Gemini)
+    ├── Step 2: λ Analyze (GitHub Copilot Models)
     └── Step 3: λ Trade (Exchange)
         → DynamoDB Global
         → SSM (API keys)

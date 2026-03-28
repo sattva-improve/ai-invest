@@ -62,7 +62,7 @@ docker compose logs -f
 - [ ] `npm run lint` — エラーなし
 - [ ] `npm run build` — ビルド成功
 - [ ] DynamoDB Local にデータが正常に書き込まれている
-- [ ] AI 分析 (Gemini API) の呼び出しが正常に完了している
+- [ ] AI 分析 (GitHub Copilot Models API) の呼び出しが正常に完了している
 - [ ] ペーパートレードが意図した通りに動作している
 
 ### 2.2 AWS 側の準備確認
@@ -83,7 +83,8 @@ aws lambda list-functions --query "Functions[?starts_with(FunctionName, 'algo-tr
 
 - [ ] AWS CLI 認証済み（正しいアカウント・リージョン）
 - [ ] `InvestmentTable` が DynamoDB に存在する
-- [ ] SSM に3つのパラメータが設定されている（`GOOGLE_GENERATIVE_AI_API_KEY`, `EXCHANGE_API_KEY`, `EXCHANGE_SECRET`）
+- [ ] SSM にブローカー系パラメータが設定されている（`EXCHANGE_API_KEY`, `EXCHANGE_SECRET` 等）
+- [ ] Lambda 環境変数に `GITHUB_TOKEN` が設定されている（SSM 経由）
 - [ ] Lambda 関数 3 つが作成されている（`algo-trade-fetch-news`, `algo-trade-fetch-price`, `algo-trade-execute-trade`）
 - [ ] IAM ロール `algo-trade-lambda-role` が存在し、DynamoDB / SSM 権限が付与されている
 
@@ -132,7 +133,8 @@ grep -r "localhost\|127\.0\.0\.1" src/ --include="*.ts" | grep -v ".test.ts" | g
 | `DYNAMODB_ENDPOINT` | `http://localhost:8000` | **設定しない**（削除） |
 | `DYNAMODB_REGION` | `ap-northeast-1` | `ap-northeast-1` |
 | `DYNAMODB_TABLE_NAME` | `InvestmentTable` | `InvestmentTable` |
-| `GOOGLE_GENERATIVE_AI_API_KEY` | `.env` に直接記載 | SSM から自動取得 |
+| `GITHUB_TOKEN` | `.env` に記載 (必須) | SSM から自動取得 |
+| `GITHUB_MODEL_ID` | `.env` に記載 (default: `openai/gpt-4.1`) | Lambda 環境変数 |
 | `EXCHANGE_API_KEY` | `.env` に直接記載 | SSM から自動取得 |
 | `EXCHANGE_SECRET` | `.env` に直接記載 | SSM から自動取得 |
 | `NODE_ENV` | `development` | `production` |
@@ -453,8 +455,7 @@ aws iam get-role-policy \
 ```bash
 # パラメータの存在確認
 aws ssm get-parameter \
-  --name "/algo-trade/GOOGLE_GENERATIVE_AI_API_KEY" \
-  --with-decryption \
+  --name "/algo-trade/GITHUB_TOKEN" \
   --region ap-northeast-1
 
 # IAM ポリシーで ssm:GetParameter が許可されているか確認
@@ -477,15 +478,15 @@ aws lambda update-function-configuration \
   --region ap-northeast-1
 ```
 
-### Gemini API レート制限
+### GitHub Copilot Models API スロットリング
 
 **症状**: `429 Too Many Requests` が CloudWatch に出る  
-**対処**: Lambda の同時実行数を制限するか、exponential backoff をコードに実装する
+**対処**: Lambda の同時実行数を制限するか、exponential backoff をコードに実装する。GitHub Models API のレートリミットも確認すること。
 
 ```bash
 # Lambda の同時実行数を制限（同時に最大 2 実行まで）
 aws lambda put-function-concurrency \
-  --function-name algo-trade-fetch-news \
+  --function-name algo-trade-analyze \
   --reserved-concurrent-executions 2 \
   --region ap-northeast-1
 ```
