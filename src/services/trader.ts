@@ -92,6 +92,7 @@ export async function executeTrade(
   request: OrderRequest,
   _config: AppConfig,
   decision: InvestmentDecision,
+  profit = 0,
 ): Promise<OrderResult> {
   const tracer = getTracer();
   return tracer.startActiveSpan("trade.execute", async (span) => {
@@ -121,6 +122,7 @@ export async function executeTrade(
         executedPrice: result.executedPrice,
         orderId: result.orderId,
         isPaper: result.isPaperTrade,
+        profit,
       };
       await saveTradeItem(saveOptions);
 

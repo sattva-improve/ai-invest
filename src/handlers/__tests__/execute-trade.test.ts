@@ -1,7 +1,12 @@
 const mockExecuteTrade = vi.fn();
+const mockGetLastTradeByTickerAndSide = vi.fn();
 
 vi.mock("../../services/trader.js", () => ({
   executeTrade: (...args: unknown[]) => mockExecuteTrade(...args),
+}));
+
+vi.mock("../../repositories/trade-repository.js", () => ({
+  getLastTradeByTickerAndSide: (...args: unknown[]) => mockGetLastTradeByTickerAndSide(...args),
 }));
 
 vi.mock("../../config/env.js", () => ({
@@ -40,6 +45,7 @@ describe("executeTradeHandler", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockExecuteTrade.mockResolvedValue(paperTradeResult);
+    mockGetLastTradeByTickerAndSide.mockResolvedValue(null);
   });
 
   it("skips trade when confidence < threshold", async () => {
@@ -102,6 +108,16 @@ describe("executeTradeHandler", () => {
       timeHorizon: "SHORT",
       targetPrice: 0.033,
     };
+
+    mockGetLastTradeByTickerAndSide.mockResolvedValue({
+      PK: "TRADE",
+      SK: "2026-01-01T00:00:00.000Z#paper-100",
+      type: "TRADE_ITEM",
+      Ticker: "ETH/BTC",
+      Side: "BUY",
+      Price: 0.03,
+      CreatedAt: "2026-01-01T00:00:00.000Z",
+    });
 
     mockExecuteTrade.mockResolvedValue({
       ...paperTradeResult,

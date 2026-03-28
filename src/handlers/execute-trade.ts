@@ -1,8 +1,10 @@
 import type { ScheduledEvent, ScheduledHandler } from "aws-lambda";
+import type pino from "pino";
 import { env } from "../config/env.js";
 import { RSS_FEEDS } from "../config/rss-feeds.js";
 import { TRADING_PAIRS } from "../config/trading-pairs.js";
 import { logger } from "../lib/logger.js";
+import { getLastTradeByTickerAndSide } from "../repositories/trade-repository.js";
 import { type InvestmentDecision, InvestmentDecisionSchema } from "../schemas/ai.js";
 import { type AppConfig, AppConfigSchema } from "../schemas/config.js";
 import type { OrderRequest } from "../schemas/trade.js";
@@ -12,6 +14,65 @@ export interface ExecuteTradeHandlerResult {
   executed: number;
   skipped: number;
   errors: number;
+}
+
+interface ProfitabilityResult {
+  shouldExecute: boolean;
+  profit: number;
+}
+
+async function checkProfitability(
+  decision: InvestmentDecision,
+  currentPrice: number,
+  log: pino.Logger,
+): Promise<ProfitabilityResult> {
+  if (decision.action === "SELL") {
+    const lastBuy = await getLastTradeByTickerAndSide(decision.ticker, "BUY");
+    if (!lastBuy) {
+      log.info({ ticker: decision.ticker }, "No previous BUY found — skipping SELL");
+      return { shouldExecute: false, profit: 0 };
+    }
+    if (currentPrice <= lastBuy.Price) {
+      log.info(
+        {
+          ticker: decision.ticker,
+          currentPrice,
+          lastBuyPrice: lastBuy.Price,
+        },
+        "Current price is not above last BUY price — skipping SELL to avoid loss",
+      );
+      return { shouldExecute: false, profit: 0 };
+    }
+    const profit = currentPrice - lastBuy.Price;
+    log.info(
+      {
+        ticker: decision.ticker,
+        currentPrice,
+        lastBuyPrice: lastBuy.Price,
+        profit,
+      },
+      "Profitable SELL opportunity detected",
+    );
+    return { shouldExecute: true, profit };
+  }
+
+  if (decision.action === "BUY") {
+    const lastSell = await getLastTradeByTickerAndSide(decision.ticker, "SELL");
+    if (lastSell && currentPrice >= lastSell.Price) {
+      log.info(
+        {
+          ticker: decision.ticker,
+          currentPrice,
+          lastSellPrice: lastSell.Price,
+        },
+        "Current price is not below last SELL price — skipping BUY to avoid buying high",
+      );
+      return { shouldExecute: false, profit: 0 };
+    }
+    return { shouldExecute: true, profit: 0 };
+  }
+
+  return { shouldExecute: false, profit: 0 };
 }
 
 export async function executeTradeHandler(
@@ -52,7 +113,11 @@ export async function executeTradeHandler(
       return { executed: 0, skipped: 1, errors: 0 };
     }
 
-    // Spot trading only — force long position, no leverage
+    const profitCheck = await checkProfitability(decision, price, log);
+    if (!profitCheck.shouldExecute) {
+      return { executed: 0, skipped: 1, errors: 0 };
+    }
+
     const positionSide: "long" | "short" = "long";
     const leverage = 1;
 
@@ -67,7 +132,7 @@ export async function executeTradeHandler(
       marginMode: config.marginMode,
     };
 
-    const result = await executeTrade(orderRequest, config, decision);
+    const result = await executeTrade(orderRequest, config, decision, profitCheck.profit);
 
     log.info(
       {
@@ -78,6 +143,7 @@ export async function executeTradeHandler(
         leverage: result.leverage,
         executedPrice: result.executedPrice,
         isPaperTrade: result.isPaperTrade,
+        profit: profitCheck.profit,
       },
       "Trade executed successfully",
     );

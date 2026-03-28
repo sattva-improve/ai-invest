@@ -72,3 +72,25 @@ export async function listRecentTrades(limit = 20): Promise<TradeItem[]> {
 
   return (result.Items ?? []) as TradeItem[];
 }
+
+export async function getLastTradeByTickerAndSide(
+  ticker: string,
+  side: "BUY" | "SELL",
+): Promise<TradeItem | null> {
+  const result = await dynamoClient.send(
+    new QueryCommand({
+      TableName: TABLE_NAME,
+      KeyConditionExpression: "PK = :pk",
+      FilterExpression: "Ticker = :ticker AND Side = :side",
+      ExpressionAttributeValues: {
+        ":pk": "TRADE",
+        ":ticker": ticker,
+        ":side": side,
+      },
+      ScanIndexForward: false,
+    }),
+  );
+
+  const items = (result.Items ?? []) as TradeItem[];
+  return items.length > 0 ? items[0] : null;
+}

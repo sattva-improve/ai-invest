@@ -338,6 +338,129 @@ function renderTradesTable(trades: TradeItem[]): void {
   );
 }
 
+interface TickerPnL {
+  ticker: string;
+  totalProfit: number;
+  tradeCount: number;
+  winCount: number;
+  lossCount: number;
+  avgBuyPrice: number;
+  avgSellPrice: number;
+}
+
+function computeTickerPnL(trades: TradeItem[]): TickerPnL[] {
+  const map = new Map<string, { profits: number[]; buyPrices: number[]; sellPrices: number[] }>();
+
+  for (const trade of trades) {
+    const ticker = trade.Ticker ?? "UNKNOWN";
+    if (!map.has(ticker)) {
+      map.set(ticker, { profits: [], buyPrices: [], sellPrices: [] });
+    }
+    const entry = map.get(ticker);
+    if (!entry) continue;
+
+    if (trade.Side === "SELL" && trade.Profit !== 0) {
+      entry.profits.push(trade.Profit);
+    }
+    if (trade.Side === "BUY") {
+      entry.buyPrices.push(trade.Price ?? 0);
+    } else {
+      entry.sellPrices.push(trade.Price ?? 0);
+    }
+  }
+
+  const results: TickerPnL[] = [];
+  for (const [ticker, data] of map) {
+    const totalProfit = data.profits.reduce((sum, p) => sum + p, 0);
+    const winCount = data.profits.filter((p) => p > 0).length;
+    const lossCount = data.profits.filter((p) => p < 0).length;
+    const avgBuyPrice =
+      data.buyPrices.length > 0
+        ? data.buyPrices.reduce((s, p) => s + p, 0) / data.buyPrices.length
+        : 0;
+    const avgSellPrice =
+      data.sellPrices.length > 0
+        ? data.sellPrices.reduce((s, p) => s + p, 0) / data.sellPrices.length
+        : 0;
+    results.push({
+      ticker,
+      totalProfit,
+      tradeCount: data.buyPrices.length + data.sellPrices.length,
+      winCount,
+      lossCount,
+      avgBuyPrice,
+      avgSellPrice,
+    });
+  }
+
+  results.sort((a, b) => b.totalProfit - a.totalProfit);
+  return results;
+}
+
+function renderProfitSummary(trades: TradeItem[]): void {
+  printHeader("PROFIT & LOSS SUMMARY");
+
+  if (trades.length === 0) {
+    console.log(`  ${c.dim}No trade data available${c.reset}`);
+    return;
+  }
+
+  const tickerPnL = computeTickerPnL(trades);
+
+  const cols = [
+    pad(`${c.bold}Ticker${c.reset}`, 16),
+    pad(`${c.bold}Trades${c.reset}`, 10),
+    pad(`${c.bold}Wins${c.reset}`, 8),
+    pad(`${c.bold}Losses${c.reset}`, 10),
+    pad(`${c.bold}Win Rate${c.reset}`, 12),
+    pad(`${c.bold}Avg Buy${c.reset}`, 14),
+    pad(`${c.bold}Avg Sell${c.reset}`, 14),
+    pad(`${c.bold}P&L${c.reset}`, 16),
+  ];
+  console.log(`  ${cols.join(" │ ")}`);
+  printSeparator();
+
+  let grandTotalProfit = 0;
+  let grandWins = 0;
+  let grandLosses = 0;
+
+  for (const pnl of tickerPnL) {
+    grandTotalProfit += pnl.totalProfit;
+    grandWins += pnl.winCount;
+    grandLosses += pnl.lossCount;
+
+    const totalRoundTrips = pnl.winCount + pnl.lossCount;
+    const winRate = totalRoundTrips > 0 ? (pnl.winCount / totalRoundTrips) * 100 : 0;
+    const winRateStr = totalRoundTrips > 0 ? `${winRate.toFixed(0)}%` : "-";
+    const winRateColor =
+      winRate >= 50
+        ? `${c.green}${winRateStr}${c.reset}`
+        : winRate > 0
+          ? `${c.red}${winRateStr}${c.reset}`
+          : `${c.dim}${winRateStr}${c.reset}`;
+
+    const row = [
+      `  ${pad(`${c.cyan}${pnl.ticker}${c.reset}`, 16)}`,
+      pad(String(pnl.tradeCount), 6),
+      pad(`${c.green}${pnl.winCount}${c.reset}`, 8),
+      pad(`${c.red}${pnl.lossCount}${c.reset}`, 10),
+      pad(winRateColor, 12),
+      pad(pnl.avgBuyPrice > 0 ? pnl.avgBuyPrice.toFixed(6) : "-", 10),
+      pad(pnl.avgSellPrice > 0 ? pnl.avgSellPrice.toFixed(6) : "-", 10),
+      pad(colorProfit(pnl.totalProfit), 16),
+    ];
+    console.log(row.join(" │ "));
+  }
+
+  printSeparator();
+  const grandTotal = grandWins + grandLosses;
+  const grandWinRate = grandTotal > 0 ? (grandWins / grandTotal) * 100 : 0;
+  const grandWinRateStr = grandTotal > 0 ? `${grandWinRate.toFixed(0)}%` : "-";
+  console.log(
+    `  ${c.bold}Total P&L:${c.reset} ${colorProfit(grandTotalProfit)}  │  ${c.bold}Win Rate:${c.reset} ${grandWinRateStr} (${grandWins}W / ${grandLosses}L)`,
+  );
+}
+
 function renderSummary(news: NewsItem[], trades: TradeItem[], state: StateItem | null): void {
   printHeader("DASHBOARD SUMMARY");
 
@@ -377,6 +500,7 @@ async function main(): Promise<void> {
     renderSystemStatus(state);
     renderNewsTable(news);
     renderTradesTable(trades);
+    renderProfitSummary(trades);
 
     console.log(
       `\n${c.dim}Tip: Run with a number to change limit, e.g. \`npm run dashboard -- 100\`${c.reset}\n`,
