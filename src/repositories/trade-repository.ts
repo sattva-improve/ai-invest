@@ -1,6 +1,6 @@
 import { PutCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
 import type { InvestmentDecision } from "../schemas/ai.js";
-import { dynamoClient, TABLE_NAME } from "./dynamo-client.js";
+import { TABLE_NAME, dynamoClient } from "./dynamo-client.js";
 
 export interface TradeItem {
   PK: string;
@@ -8,7 +8,9 @@ export interface TradeItem {
   type: "TRADE_ITEM";
   Ticker: string;
   Side: "BUY" | "SELL";
+  PositionSide: "LONG" | "SHORT";
   Price: number;
+  Leverage: number;
   Profit: number;
   OrderId: string;
   Status: "OPEN" | "CLOSED" | "PAPER";
@@ -24,16 +26,8 @@ export interface SaveTradeOptions {
   isPaper?: boolean;
 }
 
-export async function saveTradeItem(
-  options: SaveTradeOptions,
-): Promise<TradeItem> {
-  const {
-    decision,
-    executedPrice,
-    orderId,
-    profit = 0,
-    isPaper = false,
-  } = options;
+export async function saveTradeItem(options: SaveTradeOptions): Promise<TradeItem> {
+  const { decision, executedPrice, orderId, profit = 0, isPaper = false } = options;
   const now = new Date().toISOString();
   const sk = `${now}#${orderId}`;
 
@@ -43,7 +37,9 @@ export async function saveTradeItem(
     type: "TRADE_ITEM",
     Ticker: decision.ticker,
     Side: decision.action as "BUY" | "SELL",
+    PositionSide: decision.positionSide ?? "LONG",
     Price: executedPrice,
+    Leverage: decision.leverage ?? 1,
     Profit: profit,
     OrderId: orderId,
     Status: isPaper ? "PAPER" : "OPEN",

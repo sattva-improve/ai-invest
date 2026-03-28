@@ -11,7 +11,7 @@ vi.mock("../../config/env.js", () => ({
     DYNAMODB_REGION: "ap-northeast-1",
     LOG_LEVEL: "silent",
     NODE_ENV: "test",
-    GOOGLE_GENERATIVE_AI_API_KEY: "test-key",
+    GITHUB_COPILOT_TOKEN: "test-token",
   },
 }));
 

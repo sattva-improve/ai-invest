@@ -16,10 +16,7 @@ export interface NewsItem {
   articleId: string;
 }
 
-export async function saveNewsItem(
-  article: NewsArticle,
-  sentiment: number,
-): Promise<NewsItem> {
+export async function saveNewsItem(article: NewsArticle, sentiment: number): Promise<NewsItem> {
   const now = new Date().toISOString();
   const id = article.id ?? uuidv4();
   const sk = `${now}#${id}`;
