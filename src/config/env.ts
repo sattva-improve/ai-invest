@@ -4,8 +4,9 @@ import { z } from "zod";
 config();
 
 const envSchema = z.object({
-  // AI
-  GOOGLE_GENERATIVE_AI_API_KEY: z.string().min(1, "Gemini API key is required"),
+  // AI (GitHub Models API)
+  GITHUB_TOKEN: z.string().min(1).optional(),
+  GITHUB_MODEL_ID: z.string().default("openai/gpt-4.1"),
 
   // Exchange
   EXCHANGE_ID: z.string().default("binance"),
@@ -17,8 +18,8 @@ const envSchema = z.object({
   DYNAMODB_REGION: z.string().default("ap-northeast-1"),
   DYNAMODB_TABLE_NAME: z.string().default("InvestmentTable"),
 
-  // Redis
-  REDIS_URL: z.string().default("redis://localhost:6379"),
+  // Redis (optional — skipped when not set)
+  REDIS_URL: z.string().optional(),
 
   // App
   NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
@@ -32,6 +33,26 @@ const envSchema = z.object({
     .transform((v) => Number.parseFloat(v))
     .pipe(z.number().min(0).max(1))
     .default("0.8"),
+  MAX_ORDER_VALUE_BTC: z
+    .string()
+    .transform((v) => Number.parseFloat(v))
+    .pipe(z.number().positive())
+    .default("0.001"),
+  MAX_ORDER_VALUE_JPY: z
+    .string()
+    .transform((v) => Number.parseFloat(v))
+    .pipe(z.number().positive())
+    .default("200"),
+  MAX_LEVERAGE: z
+    .string()
+    .transform((v) => Number.parseInt(v, 10))
+    .pipe(z.number().int().min(1).max(20))
+    .default("1"),
+  MARGIN_MODE: z.enum(["cross", "isolated"]).default("isolated"),
+  ENABLE_SHORT_SELLING: z
+    .string()
+    .transform((v) => v === "true")
+    .default("false"),
 });
 
 export type Env = z.infer<typeof envSchema>;
