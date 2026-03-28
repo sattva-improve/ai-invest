@@ -1,0 +1,212 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  AI Investment Bot - Main Stack (Nested)
+  Orchestrates: Network, IAM, DynamoDB, Lambda, Step Functions, EventBridge
+  Tag: Project=ai-invest
+
+Parameters:
+  Environment:
+    Type: String
+    AllowedValues: [dev, prod]
+    Default: dev
+    Description: Deployment environment (dev or prod)
+  TemplatesBucket:
+    Type: String
+    Description: S3 bucket containing nested CloudFormation templates
+  LambdaS3Bucket:
+    Type: String
+    Description: S3 bucket containing Lambda deployment package
+  LambdaS3Key:
+    Type: String
+    Default: algo-trade/lambda-deployment.zip
+    Description: S3 key for Lambda deployment package
+  DynamoDBTableName:
+    Type: String
+    Default: InvestmentTable
+  GitHubToken:
+    Type: String
+    NoEcho: true
+    Description: GitHub Personal Access Token for Models API
+  GitHubModelId:
+    Type: String
+    Default: openai/gpt-4.1
+  ConfidenceThreshold:
+    Type: String
+    Default: "0.8"
+  RedisUrl:
+    Type: String
+    Default: ""
+    Description: ElastiCache Redis endpoint (leave empty to disable)
+  PaperTrade:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+    Description: Paper trade mode (true=simulated, false=real trading)
+  MaxLeverage:
+    Type: String
+    Default: "1"
+    Description: Maximum leverage multiplier (1 for spot-only)
+  MarginMode:
+    Type: String
+    Default: isolated
+    AllowedValues: [cross, isolated]
+    Description: Futures margin mode
+  EnableShortSelling:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+    Description: Allow short selling (disabled for Binance Japan spot-only)
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: Environment
+        Parameters:
+          - Environment
+      - Label:
+          default: Deployment
+        Parameters:
+          - TemplatesBucket
+          - LambdaS3Bucket
+          - LambdaS3Key
+      - Label:
+          default: Database
+        Parameters:
+          - DynamoDBTableName
+      - Label:
+          default: AI Configuration
+        Parameters:
+          - GitHubModelId
+          - ConfidenceThreshold
+      - Label:
+          default: Cache (Optional)
+        Parameters:
+          - RedisUrl
+
+Resources:
+  # ── 0. Network (VPC + NAT Gateway + Elastic IP) ───────────────
+  NetworkStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub "https://${TemplatesBucket}.s3.amazonaws.com/cfn/network.yml"
+      Parameters:
+        Environment: !Ref Environment
+        ProjectTag: ai-invest
+      Tags:
+        - Key: Project
+          Value: ai-invest
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: CostCenter
+          Value: algo-trade
+        - Key: Service
+          Value: trading-bot
+
+  # ── 1. DynamoDB ──────────────────────────────────────────────
+  DatabaseStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub "https://${TemplatesBucket}.s3.amazonaws.com/cfn/database.yml"
+      Parameters:
+        Environment: !Ref Environment
+        ProjectTag: ai-invest
+        TableName: !Ref DynamoDBTableName
+      Tags:
+        - Key: Project
+          Value: ai-invest
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: CostCenter
+          Value: algo-trade
+        - Key: Service
+          Value: trading-bot
+
+  # ── 2. IAM Roles ────────────────────────────────────────────
+  IAMStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: DatabaseStack
+    Properties:
+      TemplateURL: !Sub "https://${TemplatesBucket}.s3.amazonaws.com/cfn/iam.yml"
+      Parameters:
+        Environment: !Ref Environment
+        ProjectTag: ai-invest
+        DynamoDBTableArn: !GetAtt DatabaseStack.Outputs.TableArn
+        LambdaS3Bucket: !Ref LambdaS3Bucket
+      Tags:
+        - Key: Project
+          Value: ai-invest
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: CostCenter
+          Value: algo-trade
+        - Key: Service
+          Value: trading-bot
+
+  # ── 3. Compute (Lambda + Step Functions + EventBridge) ──────
+  ComputeStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn:
+      - IAMStack
+      - DatabaseStack
+      - NetworkStack
+    Properties:
+      TemplateURL: !Sub "https://${TemplatesBucket}.s3.amazonaws.com/cfn/compute.yml"
+      Parameters:
+        Environment: !Ref Environment
+        ProjectTag: ai-invest
+        LambdaRoleArn: !GetAtt IAMStack.Outputs.LambdaExecutionRoleArn
+        StepFunctionsRoleArn: !GetAtt IAMStack.Outputs.StepFunctionsRoleArn
+        EventBridgeRoleArn: !GetAtt IAMStack.Outputs.EventBridgeRoleArn
+        DynamoDBTableName: !GetAtt DatabaseStack.Outputs.TableName
+        S3Bucket: !Ref LambdaS3Bucket
+        S3Key: !Ref LambdaS3Key
+        GitHubToken: !Ref GitHubToken
+        GitHubModelId: !Ref GitHubModelId
+        ConfidenceThreshold: !Ref ConfidenceThreshold
+        RedisUrl: !Ref RedisUrl
+        PaperTrade: !Ref PaperTrade
+        MaxLeverage: !Ref MaxLeverage
+        MarginMode: !Ref MarginMode
+        EnableShortSelling: !Ref EnableShortSelling
+        VpcSubnetIds: !GetAtt NetworkStack.Outputs.PrivateSubnetIds
+        VpcSecurityGroupIds: !GetAtt NetworkStack.Outputs.LambdaSecurityGroupId
+        BinanceSecretArn: !GetAtt NetworkStack.Outputs.BinanceSecretArn
+      Tags:
+        - Key: Project
+          Value: ai-invest
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: CostCenter
+          Value: algo-trade
+        - Key: Service
+          Value: trading-bot
+
+Outputs:
+  Environment:
+    Description: Deployment environment
+    Value: !Ref Environment
+
+  DynamoDBTableName:
+    Description: DynamoDB table name
+    Value: !GetAtt DatabaseStack.Outputs.TableName
+
+  LambdaRoleArn:
+    Description: Lambda execution role ARN
+    Value: !GetAtt IAMStack.Outputs.LambdaExecutionRoleArn
+
+  TradingPipelineArn:
+    Description: Step Functions pipeline ARN
+    Value: !GetAtt ComputeStack.Outputs.TradingPipelineArn
+
+  StackId:
+    Description: Main stack ID
+    Value: !Ref AWS::StackId
+
+  NATElasticIP:
+    Description: Fixed outbound IP for Lambda (whitelist on Binance)
+    Value: !GetAtt NetworkStack.Outputs.NATElasticIP
+
+  VpcId:
+    Description: VPC ID
+    Value: !GetAtt NetworkStack.Outputs.VpcId

@@ -1,0 +1,530 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  AI Investment Bot - Lambda Functions, Step Functions, EventBridge Schedulers
+  Pipeline: FetchNews -> FetchPrice -> Analyze -> MarketRouter -> Trade (JP/US/CN)
+
+Parameters:
+  Environment:
+    Type: String
+    AllowedValues: [dev, prod]
+  ProjectTag:
+    Type: String
+    Default: ai-invest
+  LambdaRoleArn:
+    Type: String
+    Description: Lambda execution role ARN
+  StepFunctionsRoleArn:
+    Type: String
+    Description: Step Functions execution role ARN
+  EventBridgeRoleArn:
+    Type: String
+    Description: EventBridge scheduler role ARN
+  DynamoDBTableName:
+    Type: String
+    Description: DynamoDB table name
+  S3Bucket:
+    Type: String
+    Description: S3 bucket containing Lambda deployment package
+  S3Key:
+    Type: String
+    Description: S3 key for Lambda deployment package
+    Default: algo-trade/lambda-deployment.zip
+  GitHubToken:
+    Type: String
+    NoEcho: true
+    Description: GitHub Personal Access Token for Models API
+  GitHubModelId:
+    Type: String
+    Default: openai/gpt-4.1
+  ConfidenceThreshold:
+    Type: String
+    Default: "0.8"
+  PaperTrade:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+    Description: Paper trade mode (true=simulated, false=real trading)
+  MaxLeverage:
+    Type: String
+    Default: "1"
+    Description: Maximum leverage multiplier (1 for spot-only)
+  MarginMode:
+    Type: String
+    Default: isolated
+    AllowedValues: [cross, isolated]
+    Description: Futures margin mode
+  EnableShortSelling:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+    Description: Allow short selling (disabled for Binance Japan spot-only)
+  RedisUrl:
+    Type: String
+    Default: ""
+    Description: ElastiCache Redis endpoint (optional)
+  VpcSubnetIds:
+    Type: CommaDelimitedList
+    Description: VPC private subnet IDs for Lambda
+  VpcSecurityGroupIds:
+    Type: CommaDelimitedList
+    Description: VPC security group IDs for Lambda
+  BinanceSecretArn:
+    Type: String
+    Default: ""
+    Description: Secrets Manager ARN for Binance API credentials
+
+Conditions:
+  IsProd: !Equals [!Ref Environment, prod]
+  HasRedis: !Not [!Equals [!Ref RedisUrl, ""]]
+  HasBinanceSecret: !Not [!Equals [!Ref BinanceSecretArn, ""]]
+
+Resources:
+  FetchNewsFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "algo-trade-fetch-news-${Environment}"
+      Runtime: nodejs22.x
+      Handler: dist/handlers/fetch-news.handler
+      Role: !Ref LambdaRoleArn
+      Code:
+        S3Bucket: !Ref S3Bucket
+        S3Key: !Ref S3Key
+      Timeout: 60
+      MemorySize: 512
+      Environment:
+        Variables:
+          NODE_ENV: !If [IsProd, production, development]
+          DYNAMODB_TABLE_NAME: !Ref DynamoDBTableName
+          DYNAMODB_REGION: !Ref "AWS::Region"
+          GITHUB_TOKEN: !Ref GitHubToken
+          GITHUB_MODEL_ID: !Ref GitHubModelId
+          PAPER_TRADE: !Ref PaperTrade
+          LOG_LEVEL: !If [IsProd, info, debug]
+          REDIS_URL: !If [HasRedis, !Ref RedisUrl, !Ref "AWS::NoValue"]
+          CONFIDENCE_THRESHOLD: !Ref ConfidenceThreshold
+          EXCHANGE_API_KEY: !If [HasBinanceSecret, !Sub "{{resolve:secretsmanager:${BinanceSecretArn}:SecretString:apiKey}}", !Ref "AWS::NoValue"]
+          EXCHANGE_SECRET: !If [HasBinanceSecret, !Sub "{{resolve:secretsmanager:${BinanceSecretArn}:SecretString:secret}}", !Ref "AWS::NoValue"]
+          MAX_LEVERAGE: !Ref MaxLeverage
+          ENABLE_SHORT_SELLING: !Ref EnableShortSelling
+      VpcConfig:
+        SubnetIds: !Ref VpcSubnetIds
+        SecurityGroupIds: !Ref VpcSecurityGroupIds
+      TracingConfig:
+        Mode: Active
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectTag
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: CostCenter
+          Value: algo-trade
+        - Key: Service
+          Value: trading-bot
+
+  FetchPriceFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "algo-trade-fetch-price-${Environment}"
+      Runtime: nodejs22.x
+      Handler: dist/handlers/fetch-price.handler
+      Role: !Ref LambdaRoleArn
+      Code:
+        S3Bucket: !Ref S3Bucket
+        S3Key: !Ref S3Key
+      Timeout: 60
+      MemorySize: 512
+      Environment:
+        Variables:
+          NODE_ENV: !If [IsProd, production, development]
+          DYNAMODB_TABLE_NAME: !Ref DynamoDBTableName
+          DYNAMODB_REGION: !Ref "AWS::Region"
+          LOG_LEVEL: !If [IsProd, info, debug]
+          REDIS_URL: !If [HasRedis, !Ref RedisUrl, !Ref "AWS::NoValue"]
+      VpcConfig:
+        SubnetIds: !Ref VpcSubnetIds
+        SecurityGroupIds: !Ref VpcSecurityGroupIds
+      TracingConfig:
+        Mode: Active
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectTag
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: CostCenter
+          Value: algo-trade
+        - Key: Service
+          Value: trading-bot
+
+  AnalyzeFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "algo-trade-analyze-${Environment}"
+      Runtime: nodejs22.x
+      Handler: dist/handlers/analyze.handler
+      Role: !Ref LambdaRoleArn
+      Code:
+        S3Bucket: !Ref S3Bucket
+        S3Key: !Ref S3Key
+      Timeout: 120
+      MemorySize: 512
+      Environment:
+        Variables:
+          NODE_ENV: !If [IsProd, production, development]
+          DYNAMODB_TABLE_NAME: !Ref DynamoDBTableName
+          DYNAMODB_REGION: !Ref "AWS::Region"
+          GITHUB_TOKEN: !Ref GitHubToken
+          GITHUB_MODEL_ID: !Ref GitHubModelId
+          CONFIDENCE_THRESHOLD: !Ref ConfidenceThreshold
+          PAPER_TRADE: !Ref PaperTrade
+          LOG_LEVEL: !If [IsProd, info, debug]
+      VpcConfig:
+        SubnetIds: !Ref VpcSubnetIds
+        SecurityGroupIds: !Ref VpcSecurityGroupIds
+      TracingConfig:
+        Mode: Active
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectTag
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: CostCenter
+          Value: algo-trade
+        - Key: Service
+          Value: trading-bot
+
+  TradeJPFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "algo-trade-trade-jp-${Environment}"
+      Runtime: nodejs22.x
+      Handler: dist/handlers/execute-trade.handler
+      Role: !Ref LambdaRoleArn
+      Code:
+        S3Bucket: !Ref S3Bucket
+        S3Key: !Ref S3Key
+      Timeout: 30
+      MemorySize: 256
+      Environment:
+        Variables:
+          NODE_ENV: !If [IsProd, production, development]
+          DYNAMODB_TABLE_NAME: !Ref DynamoDBTableName
+          DYNAMODB_REGION: !Ref "AWS::Region"
+          PAPER_TRADE: !Ref PaperTrade
+          LOG_LEVEL: !If [IsProd, info, debug]
+          MARKET: JP
+          BINANCE_SECRET_ARN: !If [HasBinanceSecret, !Ref BinanceSecretArn, !Ref "AWS::NoValue"]
+          MAX_LEVERAGE: !Ref MaxLeverage
+          MARGIN_MODE: !Ref MarginMode
+          ENABLE_SHORT_SELLING: !Ref EnableShortSelling
+      VpcConfig:
+        SubnetIds: !Ref VpcSubnetIds
+        SecurityGroupIds: !Ref VpcSecurityGroupIds
+      TracingConfig:
+        Mode: Active
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectTag
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: CostCenter
+          Value: algo-trade
+        - Key: Service
+          Value: trading-bot
+
+  TradeUSFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "algo-trade-trade-us-${Environment}"
+      Runtime: nodejs22.x
+      Handler: dist/handlers/execute-trade.handler
+      Role: !Ref LambdaRoleArn
+      Code:
+        S3Bucket: !Ref S3Bucket
+        S3Key: !Ref S3Key
+      Timeout: 30
+      MemorySize: 256
+      Environment:
+        Variables:
+          NODE_ENV: !If [IsProd, production, development]
+          DYNAMODB_TABLE_NAME: !Ref DynamoDBTableName
+          DYNAMODB_REGION: !Ref "AWS::Region"
+          PAPER_TRADE: !Ref PaperTrade
+          LOG_LEVEL: !If [IsProd, info, debug]
+          MARKET: US
+          BINANCE_SECRET_ARN: !If [HasBinanceSecret, !Ref BinanceSecretArn, !Ref "AWS::NoValue"]
+          MAX_LEVERAGE: !Ref MaxLeverage
+          MARGIN_MODE: !Ref MarginMode
+          ENABLE_SHORT_SELLING: !Ref EnableShortSelling
+      VpcConfig:
+        SubnetIds: !Ref VpcSubnetIds
+        SecurityGroupIds: !Ref VpcSecurityGroupIds
+      TracingConfig:
+        Mode: Active
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectTag
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: CostCenter
+          Value: algo-trade
+        - Key: Service
+          Value: trading-bot
+
+  TradeCNFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "algo-trade-trade-cn-${Environment}"
+      Runtime: nodejs22.x
+      Handler: dist/handlers/execute-trade.handler
+      Role: !Ref LambdaRoleArn
+      Code:
+        S3Bucket: !Ref S3Bucket
+        S3Key: !Ref S3Key
+      Timeout: 30
+      MemorySize: 256
+      Environment:
+        Variables:
+          NODE_ENV: !If [IsProd, production, development]
+          DYNAMODB_TABLE_NAME: !Ref DynamoDBTableName
+          DYNAMODB_REGION: !Ref "AWS::Region"
+          PAPER_TRADE: !Ref PaperTrade
+          LOG_LEVEL: !If [IsProd, info, debug]
+          MARKET: CN
+          BINANCE_SECRET_ARN: !If [HasBinanceSecret, !Ref BinanceSecretArn, !Ref "AWS::NoValue"]
+          MAX_LEVERAGE: !Ref MaxLeverage
+          MARGIN_MODE: !Ref MarginMode
+          ENABLE_SHORT_SELLING: !Ref EnableShortSelling
+      VpcConfig:
+        SubnetIds: !Ref VpcSubnetIds
+        SecurityGroupIds: !Ref VpcSecurityGroupIds
+      TracingConfig:
+        Mode: Active
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectTag
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: CostCenter
+          Value: algo-trade
+        - Key: Service
+          Value: trading-bot
+
+  TradeCryptoFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "algo-trade-trade-crypto-${Environment}"
+      Runtime: nodejs22.x
+      Handler: dist/handlers/execute-trade.handler
+      Role: !Ref LambdaRoleArn
+      Code:
+        S3Bucket: !Ref S3Bucket
+        S3Key: !Ref S3Key
+      Timeout: 30
+      MemorySize: 256
+      Environment:
+        Variables:
+          NODE_ENV: !If [IsProd, production, development]
+          DYNAMODB_TABLE_NAME: !Ref DynamoDBTableName
+          DYNAMODB_REGION: !Ref "AWS::Region"
+          PAPER_TRADE: !Ref PaperTrade
+          LOG_LEVEL: !If [IsProd, info, debug]
+          MARKET: CRYPTO
+          BINANCE_SECRET_ARN: !If [HasBinanceSecret, !Ref BinanceSecretArn, !Ref "AWS::NoValue"]
+          MAX_LEVERAGE: !Ref MaxLeverage
+          MARGIN_MODE: !Ref MarginMode
+          ENABLE_SHORT_SELLING: !Ref EnableShortSelling
+      VpcConfig:
+        SubnetIds: !Ref VpcSubnetIds
+        SecurityGroupIds: !Ref VpcSecurityGroupIds
+      TracingConfig:
+        Mode: Active
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectTag
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: CostCenter
+          Value: algo-trade
+        - Key: Service
+          Value: trading-bot
+
+  TradingPipeline:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: !Sub "algo-trade-pipeline-${Environment}"
+      RoleArn: !Ref StepFunctionsRoleArn
+      TracingConfiguration:
+        Enabled: true
+      DefinitionString: !Sub |
+        {
+          "Comment": "Multi-market AI Trading Pipeline: Fetch -> Analyze -> Route -> Trade",
+          "StartAt": "FetchNews",
+          "States": {
+            "FetchNews": {
+              "Type": "Task",
+              "Resource": "${FetchNewsFunction.Arn}",
+              "ResultPath": "$.newsResult",
+              "Next": "FetchPrice",
+              "Retry": [{"ErrorEquals": ["States.TaskFailed"], "IntervalSeconds": 5, "MaxAttempts": 2, "BackoffRate": 2}],
+              "Catch": [{"ErrorEquals": ["States.ALL"], "Next": "HandleError", "ResultPath": "$.error"}]
+            },
+            "FetchPrice": {
+              "Type": "Task",
+              "Resource": "${FetchPriceFunction.Arn}",
+              "ResultPath": "$.priceResult",
+              "Next": "Analyze",
+              "Retry": [{"ErrorEquals": ["States.TaskFailed"], "IntervalSeconds": 5, "MaxAttempts": 2, "BackoffRate": 2}],
+              "Catch": [{"ErrorEquals": ["States.ALL"], "Next": "HandleError", "ResultPath": "$.error"}]
+            },
+            "Analyze": {
+              "Type": "Task",
+              "Resource": "${AnalyzeFunction.Arn}",
+              "ResultPath": "$.analysisResult",
+              "Next": "CheckHighConfidence",
+              "Retry": [{"ErrorEquals": ["States.TaskFailed"], "IntervalSeconds": 10, "MaxAttempts": 1, "BackoffRate": 2}],
+              "Catch": [{"ErrorEquals": ["States.ALL"], "Next": "HandleError", "ResultPath": "$.error"}]
+            },
+            "CheckHighConfidence": {
+              "Type": "Choice",
+              "Choices": [{
+                "Variable": "$.analysisResult.confidence",
+                "NumericGreaterThan": 0.8,
+                "Next": "RouteByMarket"
+              }],
+              "Default": "LowConfidenceDone"
+            },
+            "RouteByMarket": {
+              "Type": "Choice",
+              "Choices": [
+                {"Variable": "$.analysisResult.market", "StringEquals": "JP", "Next": "TradeJP"},
+                {"Variable": "$.analysisResult.market", "StringEquals": "US", "Next": "TradeUS"},
+                {"Variable": "$.analysisResult.market", "StringEquals": "CN", "Next": "TradeCN"},
+                {"Variable": "$.analysisResult.market", "StringEquals": "CRYPTO", "Next": "TradeCrypto"}
+              ],
+              "Default": "UnknownMarketDone"
+            },
+            "TradeJP": {
+              "Type": "Task",
+              "Resource": "${TradeJPFunction.Arn}",
+              "Next": "Done",
+              "Retry": [{"ErrorEquals": ["States.TaskFailed"], "IntervalSeconds": 5, "MaxAttempts": 1, "BackoffRate": 2}],
+              "Catch": [{"ErrorEquals": ["States.ALL"], "Next": "HandleError", "ResultPath": "$.error"}]
+            },
+            "TradeUS": {
+              "Type": "Task",
+              "Resource": "${TradeUSFunction.Arn}",
+              "Next": "Done",
+              "Retry": [{"ErrorEquals": ["States.TaskFailed"], "IntervalSeconds": 5, "MaxAttempts": 1, "BackoffRate": 2}],
+              "Catch": [{"ErrorEquals": ["States.ALL"], "Next": "HandleError", "ResultPath": "$.error"}]
+            },
+            "TradeCN": {
+              "Type": "Task",
+              "Resource": "${TradeCNFunction.Arn}",
+              "Next": "Done",
+              "Retry": [{"ErrorEquals": ["States.TaskFailed"], "IntervalSeconds": 5, "MaxAttempts": 1, "BackoffRate": 2}],
+              "Catch": [{"ErrorEquals": ["States.ALL"], "Next": "HandleError", "ResultPath": "$.error"}]
+            },
+            "TradeCrypto": {
+              "Type": "Task",
+              "Resource": "${TradeCryptoFunction.Arn}",
+              "Next": "Done",
+              "Retry": [{"ErrorEquals": ["States.TaskFailed"], "IntervalSeconds": 5, "MaxAttempts": 1, "BackoffRate": 2}],
+              "Catch": [{"ErrorEquals": ["States.ALL"], "Next": "HandleError", "ResultPath": "$.error"}]
+            },
+            "LowConfidenceDone": {
+              "Type": "Succeed",
+              "Comment": "Confidence below threshold - no trade executed"
+            },
+            "UnknownMarketDone": {
+              "Type": "Succeed",
+              "Comment": "Unknown market - no trade executed"
+            },
+            "HandleError": {
+              "Type": "Fail",
+              "Error": "PipelineError",
+              "Cause": "An error occurred in the trading pipeline. Check $.error for details."
+            },
+            "Done": {
+              "Type": "Succeed"
+            }
+          }
+        }
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectTag
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: CostCenter
+          Value: algo-trade
+        - Key: Service
+          Value: trading-bot
+
+  JPMarketRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "algo-trade-jp-market-${Environment}"
+      Description: "JP market open trigger (TSE 09:00 JST = 00:00 UTC)"
+      ScheduleExpression: "cron(0 0 ? * MON-FRI *)"
+      State: !If [IsProd, ENABLED, DISABLED]
+      Targets:
+        - Id: trigger-pipeline-jp
+          Arn: !GetAtt TradingPipeline.Arn
+          RoleArn: !Ref EventBridgeRoleArn
+          Input: '{"market": "JP"}'
+
+  USMarketRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "algo-trade-us-market-${Environment}"
+      Description: "US market open trigger (NYSE 09:30 ET = 14:30 UTC standard)"
+      ScheduleExpression: "cron(30 14 ? * MON-FRI *)"
+      State: !If [IsProd, ENABLED, DISABLED]
+      Targets:
+        - Id: trigger-pipeline-us
+          Arn: !GetAtt TradingPipeline.Arn
+          RoleArn: !Ref EventBridgeRoleArn
+          Input: '{"market": "US"}'
+
+  CNMarketRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "algo-trade-cn-market-${Environment}"
+      Description: "CN/HK market open trigger (SSE/HKEX 09:30 CST = 01:30 UTC)"
+      ScheduleExpression: "cron(30 1 ? * MON-FRI *)"
+      State: !If [IsProd, ENABLED, DISABLED]
+      Targets:
+        - Id: trigger-pipeline-cn
+          Arn: !GetAtt TradingPipeline.Arn
+          RoleArn: !Ref EventBridgeRoleArn
+          Input: '{"market": "CN"}'
+
+  CryptoMarketRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "algo-trade-crypto-market-${Environment}"
+      Description: "Crypto market trigger every 3 hours (8 times/day)"
+      ScheduleExpression: "cron(0 0,3,6,9,12,15,18,21 * * ? *)"
+      State: !If [IsProd, ENABLED, DISABLED]
+      Targets:
+        - Id: trigger-pipeline-crypto
+          Arn: !GetAtt TradingPipeline.Arn
+          RoleArn: !Ref EventBridgeRoleArn
+          Input: '{"market": "CRYPTO"}'
+
+Outputs:
+  FetchNewsFunctionArn:
+    Value: !GetAtt FetchNewsFunction.Arn
+  FetchPriceFunctionArn:
+    Value: !GetAtt FetchPriceFunction.Arn
+  AnalyzeFunctionArn:
+    Value: !GetAtt AnalyzeFunction.Arn
+  TradeJPFunctionArn:
+    Value: !GetAtt TradeJPFunction.Arn
+  TradeUSFunctionArn:
+    Value: !GetAtt TradeUSFunction.Arn
+  TradeCNFunctionArn:
+    Value: !GetAtt TradeCNFunction.Arn
+  TradingPipelineArn:
+    Value: !GetAtt TradingPipeline.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-PipelineArn"

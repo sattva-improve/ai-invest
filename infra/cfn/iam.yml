@@ -1,0 +1,344 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  AI Investment Bot - IAM Roles & Policies (dev / prod)
+  Dev role: read-heavy, restricted write. Prod role: full pipeline execution.
+
+Parameters:
+  Environment:
+    Type: String
+    AllowedValues: [dev, prod]
+    Description: Deployment environment
+  ProjectTag:
+    Type: String
+    Default: ai-invest
+  DynamoDBTableArn:
+    Type: String
+    Description: ARN of the DynamoDB InvestmentTable
+  LambdaS3Bucket:
+    Type: String
+    Description: S3 bucket for Lambda deployment packages
+    Default: ""
+
+Conditions:
+  IsProd: !Equals [!Ref Environment, prod]
+  HasS3Bucket: !Not [!Equals [!Ref LambdaS3Bucket, ""]]
+
+Resources:
+  # ============================================================
+  # Lambda Execution Role
+  # ============================================================
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "algo-trade-lambda-${Environment}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectTag
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: CostCenter
+          Value: algo-trade
+        - Key: Service
+          Value: trading-bot
+
+  # ── DynamoDB Policy ──────────────────────────────────────────
+  DynamoDBPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: !Sub "algo-trade-dynamodb-${Environment}"
+      Roles:
+        - !Ref LambdaExecutionRole
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: DynamoDBReadWrite
+            Effect: Allow
+            Action:
+              - dynamodb:GetItem
+              - dynamodb:PutItem
+              - dynamodb:UpdateItem
+              - dynamodb:DeleteItem
+              - dynamodb:Query
+              - dynamodb:Scan
+              - dynamodb:BatchGetItem
+              - dynamodb:BatchWriteItem
+            Resource:
+              - !Ref DynamoDBTableArn
+              # GSI (TypeIndex) access
+              - !Sub "${DynamoDBTableArn}/index/*"
+
+  # ── SSM Parameter Store Policy ───────────────────────────────
+  SSMPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: !Sub "algo-trade-ssm-${Environment}"
+      Roles:
+        - !Ref LambdaExecutionRole
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: SSMReadParameters
+            Effect: Allow
+            Action:
+              - ssm:GetParameter
+              - ssm:GetParameters
+              - ssm:GetParametersByPath
+            Resource:
+              - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/algo-trade/*"
+
+  # ── CloudWatch Logs (enhanced) ───────────────────────────────
+  CloudWatchLogsPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: !Sub "algo-trade-logs-${Environment}"
+      Roles:
+        - !Ref LambdaExecutionRole
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: CloudWatchLogs
+            Effect: Allow
+            Action:
+              - logs:CreateLogGroup
+              - logs:CreateLogStream
+              - logs:PutLogEvents
+              - logs:DescribeLogGroups
+              - logs:DescribeLogStreams
+            Resource:
+              - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/algo-trade-*"
+              - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/algo-trade-*:*"
+
+  # ── X-Ray Tracing (OpenTelemetry) ───────────────────────────
+  XRayPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: !Sub "algo-trade-xray-${Environment}"
+      Roles:
+        - !Ref LambdaExecutionRole
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: XRayTracing
+            Effect: Allow
+            Action:
+              - xray:PutTraceSegments
+              - xray:PutTelemetryRecords
+              - xray:GetSamplingRules
+              - xray:GetSamplingTargets
+            Resource: "*"
+
+  SecretsManagerPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: !Sub "algo-trade-secrets-${Environment}"
+      Roles:
+        - !Ref LambdaExecutionRole
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: SecretsManagerRead
+            Effect: Allow
+            Action:
+              - secretsmanager:GetSecretValue
+            Resource:
+              - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:algo-trade/*"
+
+  # ============================================================
+  # Step Functions Execution Role
+  # ============================================================
+  StepFunctionsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "algo-trade-stepfunctions-${Environment}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: states.amazonaws.com
+            Action: sts:AssumeRole
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectTag
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: CostCenter
+          Value: algo-trade
+        - Key: Service
+          Value: trading-bot
+
+  StepFunctionsPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: !Sub "algo-trade-sfn-policy-${Environment}"
+      Roles:
+        - !Ref StepFunctionsRole
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: InvokeLambdas
+            Effect: Allow
+            Action:
+              - lambda:InvokeFunction
+            Resource:
+              - !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:algo-trade-*"
+          - Sid: CloudWatchLogsForStepFunctions
+            Effect: Allow
+            Action:
+              - logs:CreateLogDelivery
+              - logs:GetLogDelivery
+              - logs:UpdateLogDelivery
+              - logs:DeleteLogDelivery
+              - logs:ListLogDeliveries
+              - logs:PutResourcePolicy
+              - logs:DescribeResourcePolicies
+              - logs:DescribeLogGroups
+            Resource: "*"
+
+  # ============================================================
+  # EventBridge Scheduler Role
+  # ============================================================
+  EventBridgeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "algo-trade-eventbridge-${Environment}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sts:AssumeRole
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectTag
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: CostCenter
+          Value: algo-trade
+        - Key: Service
+          Value: trading-bot
+
+  EventBridgePolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: !Sub "algo-trade-eventbridge-policy-${Environment}"
+      Roles:
+        - !Ref EventBridgeRole
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: InvokeStepFunctions
+            Effect: Allow
+            Action:
+              - states:StartExecution
+            Resource:
+              - !Sub "arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:algo-trade-*"
+
+  # ============================================================
+  # CI/CD Deploy Role (GitHub Actions)
+  # ============================================================
+  DeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "algo-trade-deploy-${Environment}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: cloudformation.amazonaws.com
+            Action: sts:AssumeRole
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectTag
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: CostCenter
+          Value: algo-trade
+        - Key: Service
+          Value: trading-bot
+
+  DeployPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: !Sub "algo-trade-deploy-policy-${Environment}"
+      Roles:
+        - !Ref DeployRole
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: CloudFormationManage
+            Effect: Allow
+            Action:
+              - cloudformation:*
+            Resource:
+              - !Sub "arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/algo-trade-*/*"
+          - Sid: LambdaManage
+            Effect: Allow
+            Action:
+              - lambda:CreateFunction
+              - lambda:UpdateFunctionCode
+              - lambda:UpdateFunctionConfiguration
+              - lambda:DeleteFunction
+              - lambda:GetFunction
+              - lambda:ListFunctions
+              - lambda:AddPermission
+              - lambda:RemovePermission
+              - lambda:TagResource
+            Resource:
+              - !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:algo-trade-*"
+          - Sid: IAMPassRole
+            Effect: Allow
+            Action:
+              - iam:PassRole
+            Resource:
+              - !GetAtt LambdaExecutionRole.Arn
+              - !GetAtt StepFunctionsRole.Arn
+              - !GetAtt EventBridgeRole.Arn
+          - Sid: S3DeploymentPackage
+            Effect: Allow
+            Action:
+              - s3:GetObject
+              - s3:PutObject
+              - s3:DeleteObject
+            Resource:
+              - !If
+                - HasS3Bucket
+                - !Sub "arn:aws:s3:::${LambdaS3Bucket}/algo-trade/*"
+                - !Sub "arn:aws:s3:::algo-trade-deploy-${AWS::AccountId}/*"
+
+Outputs:
+  LambdaExecutionRoleArn:
+    Description: Lambda execution role ARN
+    Value: !GetAtt LambdaExecutionRole.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-LambdaRoleArn"
+
+  StepFunctionsRoleArn:
+    Description: Step Functions execution role ARN
+    Value: !GetAtt StepFunctionsRole.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-StepFunctionsRoleArn"
+
+  EventBridgeRoleArn:
+    Description: EventBridge scheduler role ARN
+    Value: !GetAtt EventBridgeRole.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-EventBridgeRoleArn"
+
+  DeployRoleArn:
+    Description: CI/CD deploy role ARN
+    Value: !GetAtt DeployRole.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-DeployRoleArn"

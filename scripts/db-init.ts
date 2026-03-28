@@ -50,9 +50,7 @@ async function createTable(): Promise<void> {
 }
 
 async function verifyTable(): Promise<void> {
-  const result = await client.send(
-    new DescribeTableCommand({ TableName: tableName }),
-  );
+  const result = await client.send(new DescribeTableCommand({ TableName: tableName }));
   console.log(`✅ Table status: ${result.Table?.TableStatus}`);
 }
 

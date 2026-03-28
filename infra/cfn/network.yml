@@ -1,0 +1,330 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  AI Investment Bot - VPC, Subnets, NAT Gateway, Elastic IP
+  Provides fixed outbound IP for Lambda (Binance API whitelist)
+
+Parameters:
+  Environment:
+    Type: String
+    AllowedValues: [dev, prod]
+  ProjectTag:
+    Type: String
+    Default: ai-invest
+
+Resources:
+  # ============================================================
+  # VPC
+  # ============================================================
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: !Sub "algo-trade-vpc-${Environment}"
+        - Key: Project
+          Value: !Ref ProjectTag
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: CostCenter
+          Value: algo-trade
+        - Key: Service
+          Value: trading-bot
+
+  # ============================================================
+  # Internet Gateway (for NAT Gateway outbound)
+  # ============================================================
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub "algo-trade-igw-${Environment}"
+        - Key: Project
+          Value: !Ref ProjectTag
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: CostCenter
+          Value: algo-trade
+        - Key: Service
+          Value: trading-bot
+
+  IGWAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  # ============================================================
+  # Elastic IP (fixed IP for Binance API whitelist)
+  # ============================================================
+  NATElasticIP:
+    Type: AWS::EC2::EIP
+    DependsOn: IGWAttachment
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: !Sub "algo-trade-nat-eip-${Environment}"
+        - Key: Project
+          Value: !Ref ProjectTag
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: CostCenter
+          Value: algo-trade
+        - Key: Service
+          Value: trading-bot
+
+  # ============================================================
+  # Public Subnet (NAT Gateway lives here)
+  # ============================================================
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.1.0/24
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub "algo-trade-public-1a-${Environment}"
+        - Key: Project
+          Value: !Ref ProjectTag
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: CostCenter
+          Value: algo-trade
+        - Key: Service
+          Value: trading-bot
+
+  # ============================================================
+  # NAT Gateway (in public subnet, uses Elastic IP)
+  # ============================================================
+  NATGateway:
+    Type: AWS::EC2::NatGateway
+    DependsOn: IGWAttachment
+    Properties:
+      AllocationId: !GetAtt NATElasticIP.AllocationId
+      SubnetId: !Ref PublicSubnet
+      Tags:
+        - Key: Name
+          Value: !Sub "algo-trade-nat-${Environment}"
+        - Key: Project
+          Value: !Ref ProjectTag
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: CostCenter
+          Value: algo-trade
+        - Key: Service
+          Value: trading-bot
+
+  # ============================================================
+  # Private Subnets (Lambda functions live here — 2 AZs)
+  # ============================================================
+  PrivateSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.10.0/24
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      Tags:
+        - Key: Name
+          Value: !Sub "algo-trade-private-1a-${Environment}"
+        - Key: Project
+          Value: !Ref ProjectTag
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: CostCenter
+          Value: algo-trade
+        - Key: Service
+          Value: trading-bot
+
+  PrivateSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.11.0/24
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      Tags:
+        - Key: Name
+          Value: !Sub "algo-trade-private-1c-${Environment}"
+        - Key: Project
+          Value: !Ref ProjectTag
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: CostCenter
+          Value: algo-trade
+        - Key: Service
+          Value: trading-bot
+
+  # ============================================================
+  # Route Tables
+  # ============================================================
+
+  # Public Route Table — routes to Internet Gateway
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub "algo-trade-public-rt-${Environment}"
+        - Key: Project
+          Value: !Ref ProjectTag
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: CostCenter
+          Value: algo-trade
+        - Key: Service
+          Value: trading-bot
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: IGWAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet
+      RouteTableId: !Ref PublicRouteTable
+
+  # Private Route Table — routes to NAT Gateway (fixed EIP)
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub "algo-trade-private-rt-${Environment}"
+        - Key: Project
+          Value: !Ref ProjectTag
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: CostCenter
+          Value: algo-trade
+        - Key: Service
+          Value: trading-bot
+
+  PrivateRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NATGateway
+
+  PrivateSubnetARouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetA
+      RouteTableId: !Ref PrivateRouteTable
+
+  PrivateSubnetBRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetB
+      RouteTableId: !Ref PrivateRouteTable
+
+  # ============================================================
+  # Security Group (Lambda outbound — all egress allowed)
+  # ============================================================
+  LambdaSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub "algo-trade-lambda-sg-${Environment} - outbound only"
+      VpcId: !Ref VPC
+      SecurityGroupEgress:
+        - IpProtocol: "-1"
+          CidrIp: 0.0.0.0/0
+          Description: Allow all outbound traffic
+      Tags:
+        - Key: Name
+          Value: !Sub "algo-trade-lambda-sg-${Environment}"
+        - Key: Project
+          Value: !Ref ProjectTag
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: CostCenter
+          Value: algo-trade
+        - Key: Service
+          Value: trading-bot
+
+  # ============================================================
+  # VPC Endpoints (DynamoDB + S3 — avoid NAT Gateway charges)
+  # ============================================================
+  DynamoDBEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VPC
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.dynamodb"
+      VpcEndpointType: Gateway
+      RouteTableIds:
+        - !Ref PrivateRouteTable
+
+  S3Endpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VPC
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.s3"
+      VpcEndpointType: Gateway
+      RouteTableIds:
+        - !Ref PrivateRouteTable
+
+  # ============================================================
+  # Secrets Manager (Binance API credentials)
+  # ============================================================
+  BinanceApiSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub "algo-trade/binance-api-${Environment}"
+      Description: !Sub "Binance API credentials for ${Environment}"
+      SecretString: '{"apiKey":"PLACEHOLDER","secret":"PLACEHOLDER"}'
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectTag
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: CostCenter
+          Value: algo-trade
+        - Key: Service
+          Value: trading-bot
+
+Outputs:
+  VpcId:
+    Description: VPC ID
+    Value: !Ref VPC
+    Export:
+      Name: !Sub "${AWS::StackName}-VpcId"
+
+  PrivateSubnetIds:
+    Description: Private subnet IDs (comma-separated)
+    Value: !Join [",", [!Ref PrivateSubnetA, !Ref PrivateSubnetB]]
+    Export:
+      Name: !Sub "${AWS::StackName}-PrivateSubnetIds"
+
+  LambdaSecurityGroupId:
+    Description: Security group ID for Lambda functions
+    Value: !Ref LambdaSecurityGroup
+    Export:
+      Name: !Sub "${AWS::StackName}-LambdaSecurityGroupId"
+
+  NATElasticIP:
+    Description: Fixed Elastic IP for outbound traffic (whitelist this on Binance)
+    Value: !Ref NATElasticIP
+    Export:
+      Name: !Sub "${AWS::StackName}-NATElasticIP"
+
+  NATGatewayId:
+    Description: NAT Gateway ID
+    Value: !Ref NATGateway
+
+  BinanceSecretArn:
+    Description: Binance API credentials secret ARN
+    Value: !Ref BinanceApiSecret
+    Export:
+      Name: !Sub "${AWS::StackName}-BinanceSecretArn"

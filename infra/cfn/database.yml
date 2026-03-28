@@ -1,0 +1,85 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  AI Investment Bot - DynamoDB Single-Table Design
+  Entities: NEWS_ITEM, TRADE_ITEM, BALANCE_ITEM, STATE_ITEM, PRICE_ITEM
+  GSI: TypeIndex (cross-market queries)
+
+Parameters:
+  Environment:
+    Type: String
+    AllowedValues: [dev, prod]
+  ProjectTag:
+    Type: String
+    Default: ai-invest
+  TableName:
+    Type: String
+    Default: InvestmentTable
+
+Conditions:
+  IsProd: !Equals [!Ref Environment, prod]
+
+Resources:
+  InvestmentTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: !If [IsProd, Retain, Delete]
+    UpdateReplacePolicy: !If [IsProd, Retain, Delete]
+    Properties:
+      TableName: !Sub "${TableName}-${Environment}"
+      BillingMode: !If [IsProd, PAY_PER_REQUEST, PROVISIONED]
+      ProvisionedThroughput: !If
+        - IsProd
+        - !Ref AWS::NoValue
+        - ReadCapacityUnits: 5
+          WriteCapacityUnits: 5
+      AttributeDefinitions:
+        - AttributeName: PK
+          AttributeType: S
+        - AttributeName: SK
+          AttributeType: S
+        - AttributeName: type
+          AttributeType: S
+      KeySchema:
+        - AttributeName: PK
+          KeyType: HASH
+        - AttributeName: SK
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: TypeIndex
+          KeySchema:
+            - AttributeName: type
+              KeyType: HASH
+            - AttributeName: SK
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+          ProvisionedThroughput: !If
+            - IsProd
+            - !Ref AWS::NoValue
+            - ReadCapacityUnits: 5
+              WriteCapacityUnits: 5
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: !If [IsProd, true, false]
+      SSESpecification:
+        SSEEnabled: true
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectTag
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: CostCenter
+          Value: algo-trade
+        - Key: Service
+          Value: trading-bot
+
+Outputs:
+  TableArn:
+    Description: DynamoDB table ARN
+    Value: !GetAtt InvestmentTable.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-TableArn"
+
+  TableName:
+    Description: DynamoDB table name
+    Value: !Ref InvestmentTable
+    Export:
+      Name: !Sub "${AWS::StackName}-TableName"
