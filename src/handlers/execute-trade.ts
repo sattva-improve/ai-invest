@@ -57,18 +57,6 @@ async function checkProfitability(
   }
 
   if (decision.action === "BUY") {
-    const lastSell = await getLastTradeByTickerAndSide(decision.ticker, "SELL");
-    if (lastSell && currentPrice >= lastSell.Price) {
-      log.info(
-        {
-          ticker: decision.ticker,
-          currentPrice,
-          lastSellPrice: lastSell.Price,
-        },
-        "Current price is not below last SELL price — skipping BUY to avoid buying high",
-      );
-      return { shouldExecute: false, profit: 0 };
-    }
     return { shouldExecute: true, profit: 0 };
   }
 

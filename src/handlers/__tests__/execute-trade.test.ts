@@ -164,4 +164,31 @@ describe("executeTradeHandler", () => {
 
     expect(result).toEqual({ executed: 0, skipped: 0, errors: 1 });
   });
+
+  it("executes BUY even when previous SELL exists at lower price", async () => {
+    const decision: InvestmentDecision = {
+      ticker: "ETH/BTC",
+      action: "BUY",
+      confidence: 0.92,
+      reasoning: "Re-entry after sell",
+      riskLevel: "MEDIUM",
+      timeHorizon: "SHORT",
+      targetPrice: 0.04,
+    };
+
+    mockGetLastTradeByTickerAndSide.mockResolvedValue({
+      PK: "TRADE",
+      SK: "2026-01-01T00:00:00.000Z#paper-200",
+      type: "TRADE_ITEM",
+      Ticker: "ETH/BTC",
+      Side: "SELL",
+      Price: 0.035,
+      CreatedAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    const result = await executeTradeHandler(decision, testConfig);
+
+    expect(result).toEqual({ executed: 1, skipped: 0, errors: 0 });
+    expect(mockExecuteTrade).toHaveBeenCalledTimes(1);
+  });
 });

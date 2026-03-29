@@ -81,11 +81,24 @@ export async function fetchNewsHandler(config: AppConfig): Promise<FetchNewsHand
         const marketData = isCrypto
           ? await getCryptoMarketData(decision.ticker)
           : await getStockMarketData(decision.ticker);
+
+        if (!marketData) {
+          log.warn(
+            {
+              ticker: decision.ticker,
+              confidence: decision.confidence,
+              hasTargetPrice: decision.targetPrice != null,
+            },
+            "Market data unavailable — trade will use targetPrice as fallback",
+          );
+        }
+
         log.info(
           {
             ticker: decision.ticker,
             action: decision.action,
             confidence: decision.confidence,
+            marketPrice: marketData?.price,
           },
           "High-confidence signal detected — executing trade",
         );

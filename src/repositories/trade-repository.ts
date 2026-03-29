@@ -88,6 +88,7 @@ export async function getLastTradeByTickerAndSide(
         ":side": side,
       },
       ScanIndexForward: false,
+      Limit: 10,
     }),
   );
 
