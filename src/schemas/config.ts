@@ -21,6 +21,7 @@ export const AppConfigSchema = z.object({
   priceIntervalMinutes: z.number().positive().default(5),
   maxOrderValueBtc: z.number().positive().default(0.001),
   maxOrderValueJpy: z.number().positive().default(200),
+  maxAllocationPercent: z.number().min(0.01).max(1).default(0.05),
   maxLeverage: z.number().int().min(1).max(20).default(1),
   marginMode: z.enum(["cross", "isolated"]).default("isolated"),
   enableShortSelling: z.boolean().default(false),

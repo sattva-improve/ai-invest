@@ -1,3 +1,5 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
 const mockFetchRssFeeds = vi.fn();
 const mockAnalyzeNews = vi.fn();
 const mockFindByUrl = vi.fn();
@@ -20,6 +22,7 @@ vi.mock("../../repositories/state-repository.js", () => ({
 vi.mock("../../config/env.js", () => ({
   env: {
     CONFIDENCE_THRESHOLD: 0.8,
+    MAX_ARTICLES_PER_CYCLE: 5,
     LOG_LEVEL: "silent",
     NODE_ENV: "test",
     GITHUB_COPILOT_TOKEN: "test-token",
@@ -36,6 +39,11 @@ const testConfig: AppConfig = {
   fetchIntervalMinutes: 60,
   priceIntervalMinutes: 5,
   maxOrderValueBtc: 0.001,
+  maxOrderValueJpy: 200,
+  maxAllocationPercent: 0.05,
+  maxLeverage: 1,
+  marginMode: "isolated",
+  enableShortSelling: false,
 };
 
 const testArticles = [
@@ -164,8 +172,25 @@ describe("fetchNewsHandler", () => {
     expect(result.remaining).toBe(0);
   });
 
-  it("stops at MAX_ARTICLES_PER_CYCLE=3 and reports remaining articles", async () => {
-    mockFetchRssFeeds.mockResolvedValue(fiveArticles);
+  it("stops at MAX_ARTICLES_PER_CYCLE=5 and reports remaining articles", async () => {
+    const sevenArticles = [
+      ...fiveArticles,
+      {
+        id: "uuid-6",
+        title: "DOT Dips",
+        url: "https://example.com/dot-dips",
+        publishedAt: "2026-01-06T00:00:00.000Z",
+        source: "CryptoNews",
+      },
+      {
+        id: "uuid-7",
+        title: "AVAX Surges",
+        url: "https://example.com/avax-surges",
+        publishedAt: "2026-01-07T00:00:00.000Z",
+        source: "CryptoNews",
+      },
+    ];
+    mockFetchRssFeeds.mockResolvedValue(sevenArticles);
     mockFindByUrl.mockResolvedValue(null);
     mockAnalyzeNews.mockResolvedValue({
       ticker: "ETH/BTC",
@@ -178,17 +203,36 @@ describe("fetchNewsHandler", () => {
 
     const result = await fetchNewsHandler(testConfig);
 
-    expect(mockAnalyzeNews).toHaveBeenCalledTimes(3);
-    expect(result.processed).toBe(5);
-    expect(result.analyzed).toBe(3);
+    expect(mockAnalyzeNews).toHaveBeenCalledTimes(5);
+    expect(result.processed).toBe(7);
+    expect(result.analyzed).toBe(5);
     expect(result.remaining).toBe(2);
     expect(result.skipped).toBe(0);
   });
 
   it("calculates remaining correctly when some articles are skipped", async () => {
-    mockFetchRssFeeds.mockResolvedValue(fiveArticles);
+    const sevenArticles = [
+      ...fiveArticles,
+      {
+        id: "uuid-6",
+        title: "DOT Dips",
+        url: "https://example.com/dot-dips",
+        publishedAt: "2026-01-06T00:00:00.000Z",
+        source: "CryptoNews",
+      },
+      {
+        id: "uuid-7",
+        title: "AVAX Surges",
+        url: "https://example.com/avax-surges",
+        publishedAt: "2026-01-07T00:00:00.000Z",
+        source: "CryptoNews",
+      },
+    ];
+    mockFetchRssFeeds.mockResolvedValue(sevenArticles);
     mockFindByUrl
       .mockResolvedValueOnce({ PK: "NEWS", Url: "already-processed" })
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(null)
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce(null)
@@ -204,9 +248,9 @@ describe("fetchNewsHandler", () => {
 
     const result = await fetchNewsHandler(testConfig);
 
-    expect(result.processed).toBe(5);
+    expect(result.processed).toBe(7);
     expect(result.skipped).toBe(1);
-    expect(result.analyzed).toBe(3);
+    expect(result.analyzed).toBe(5);
     expect(result.remaining).toBe(1);
   });
 });

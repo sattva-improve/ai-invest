@@ -143,6 +143,21 @@ interface TradeItem {
   Status: string;
   Confidence: number;
   CreatedAt: string;
+  Currency?: string;
+  ProfitJPY?: number;
+  ConversionRate?: number;
+}
+
+interface PositionItem {
+  PK: string;
+  SK: string;
+  Ticker: string;
+  Amount: number;
+  AvgBuyPrice: number;
+  TotalInvested: number;
+  Currency: string;
+  TotalInvestedJPY: number;
+  UpdatedAt: string;
 }
 
 interface StateItem {
@@ -223,6 +238,21 @@ async function fetchState(): Promise<StateItem | null> {
   }
 }
 
+async function fetchPositions(): Promise<PositionItem[]> {
+  try {
+    const result = await client.send(
+      new QueryCommand({
+        TableName: tableName,
+        KeyConditionExpression: "PK = :pk",
+        ExpressionAttributeValues: { ":pk": "POSITION" },
+      }),
+    );
+    return (result.Items ?? []) as PositionItem[];
+  } catch {
+    return [];
+  }
+}
+
 // ─── Renderers ─────────────────────────────────────────────────
 
 function renderSystemStatus(state: StateItem | null): void {
@@ -236,6 +266,47 @@ function renderSystemStatus(state: StateItem | null): void {
   console.log(`  ${c.bold}Last Run:${c.reset}  ${formatDate(state.LastRun)}`);
   console.log(`  ${c.bold}Balance:${c.reset}   ${state.Balance}`);
   console.log(`  ${c.bold}Updated:${c.reset}   ${formatDate(state.UpdatedAt)}`);
+}
+
+function renderPositionsTable(positions: PositionItem[]): void {
+  printHeader(`CURRENT POSITIONS (${positions.length} items)`);
+
+  if (positions.length === 0) {
+    console.log(`  ${c.dim}No positions found${c.reset}`);
+    return;
+  }
+
+  const cols = [
+    pad(`${c.bold}Ticker${c.reset}`, 16),
+    pad(`${c.bold}Amount${c.reset}`, 14),
+    pad(`${c.bold}Avg Buy Price${c.reset}`, 18),
+    pad(`${c.bold}Currency${c.reset}`, 12),
+    pad(`${c.bold}Invested (JPY)${c.reset}`, 20),
+    pad(`${c.bold}Updated${c.reset}`, 22),
+  ];
+  console.log(`  ${cols.join(" │ ")}`);
+  printSeparator();
+
+  let totalInvestedJPY = 0;
+
+  for (const pos of positions) {
+    totalInvestedJPY += pos.TotalInvestedJPY ?? 0;
+
+    const row = [
+      `  ${pad(`${c.cyan}${pos.Ticker}${c.reset}`, 16)}`,
+      pad(`${c.green}${(pos.Amount ?? 0).toFixed(4)}${c.reset}`, 14),
+      pad((pos.AvgBuyPrice ?? 0).toFixed(4), 14),
+      pad(pos.Currency ?? "-", 8),
+      pad(`¥${(pos.TotalInvestedJPY ?? 0).toLocaleString("ja-JP")}`, 16),
+      pad(formatDate(pos.UpdatedAt), 18),
+    ];
+    console.log(row.join(" │ "));
+  }
+
+  printSeparator();
+  console.log(
+    `  ${c.bold}Total Invested (JPY):${c.reset}  ${c.green}¥${totalInvestedJPY.toLocaleString("ja-JP")}${c.reset}`,
+  );
 }
 
 function renderNewsTable(news: NewsItem[]): void {
@@ -341,6 +412,7 @@ function renderTradesTable(trades: TradeItem[]): void {
 interface TickerPnL {
   ticker: string;
   totalProfit: number;
+  totalProfitJPY: number | null;
   tradeCount: number;
   winCount: number;
   lossCount: number;
@@ -349,18 +421,22 @@ interface TickerPnL {
 }
 
 function computeTickerPnL(trades: TradeItem[]): TickerPnL[] {
-  const map = new Map<string, { profits: number[]; buyPrices: number[]; sellPrices: number[] }>();
+  const map = new Map<
+    string,
+    { profits: number[]; profitsJpy: (number | null)[]; buyPrices: number[]; sellPrices: number[] }
+  >();
 
   for (const trade of trades) {
     const ticker = trade.Ticker ?? "UNKNOWN";
     if (!map.has(ticker)) {
-      map.set(ticker, { profits: [], buyPrices: [], sellPrices: [] });
+      map.set(ticker, { profits: [], profitsJpy: [], buyPrices: [], sellPrices: [] });
     }
     const entry = map.get(ticker);
     if (!entry) continue;
 
     if (trade.Side === "SELL" && trade.Profit !== 0) {
-      entry.profits.push(trade.Profit);
+      entry.profits.push(trade.ProfitJPY ?? trade.Profit);
+      entry.profitsJpy.push(trade.ProfitJPY ?? null);
     }
     if (trade.Side === "BUY") {
       entry.buyPrices.push(trade.Price ?? 0);
@@ -372,6 +448,10 @@ function computeTickerPnL(trades: TradeItem[]): TickerPnL[] {
   const results: TickerPnL[] = [];
   for (const [ticker, data] of map) {
     const totalProfit = data.profits.reduce((sum, p) => sum + p, 0);
+    const hasJpy = data.profitsJpy.some((p) => p !== null);
+    const totalProfitJPY = hasJpy
+      ? data.profitsJpy.reduce((sum, p) => (sum ?? 0) + (p ?? 0), 0 as number)
+      : null;
     const winCount = data.profits.filter((p) => p > 0).length;
     const lossCount = data.profits.filter((p) => p < 0).length;
     const avgBuyPrice =
@@ -385,6 +465,7 @@ function computeTickerPnL(trades: TradeItem[]): TickerPnL[] {
     results.push({
       ticker,
       totalProfit,
+      totalProfitJPY,
       tradeCount: data.buyPrices.length + data.sellPrices.length,
       winCount,
       lossCount,
@@ -406,6 +487,7 @@ function renderProfitSummary(trades: TradeItem[]): void {
   }
 
   const tickerPnL = computeTickerPnL(trades);
+  const anyJpy = tickerPnL.some((p) => p.totalProfitJPY !== null);
 
   const cols = [
     pad(`${c.bold}Ticker${c.reset}`, 16),
@@ -416,16 +498,19 @@ function renderProfitSummary(trades: TradeItem[]): void {
     pad(`${c.bold}Avg Buy${c.reset}`, 14),
     pad(`${c.bold}Avg Sell${c.reset}`, 14),
     pad(`${c.bold}P&L${c.reset}`, 16),
+    ...(anyJpy ? [pad(`${c.bold}P&L (JPY)${c.reset}`, 18)] : []),
   ];
   console.log(`  ${cols.join(" │ ")}`);
   printSeparator();
 
   let grandTotalProfit = 0;
+  let grandTotalProfitJPY = 0;
   let grandWins = 0;
   let grandLosses = 0;
 
   for (const pnl of tickerPnL) {
     grandTotalProfit += pnl.totalProfit;
+    grandTotalProfitJPY += pnl.totalProfitJPY ?? pnl.totalProfit;
     grandWins += pnl.winCount;
     grandLosses += pnl.lossCount;
 
@@ -439,6 +524,17 @@ function renderProfitSummary(trades: TradeItem[]): void {
           ? `${c.red}${winRateStr}${c.reset}`
           : `${c.dim}${winRateStr}${c.reset}`;
 
+    const jpyCol = anyJpy
+      ? [
+          pad(
+            pnl.totalProfitJPY !== null
+              ? `¥${pnl.totalProfitJPY > 0 ? "+" : ""}${pnl.totalProfitJPY.toLocaleString("ja-JP")}`
+              : `${c.dim}-${c.reset}`,
+            18,
+          ),
+        ]
+      : [];
+
     const row = [
       `  ${pad(`${c.cyan}${pnl.ticker}${c.reset}`, 16)}`,
       pad(String(pnl.tradeCount), 6),
@@ -448,6 +544,7 @@ function renderProfitSummary(trades: TradeItem[]): void {
       pad(pnl.avgBuyPrice > 0 ? pnl.avgBuyPrice.toFixed(6) : "-", 10),
       pad(pnl.avgSellPrice > 0 ? pnl.avgSellPrice.toFixed(6) : "-", 10),
       pad(colorProfit(pnl.totalProfit), 16),
+      ...jpyCol,
     ];
     console.log(row.join(" │ "));
   }
@@ -456,12 +553,35 @@ function renderProfitSummary(trades: TradeItem[]): void {
   const grandTotal = grandWins + grandLosses;
   const grandWinRate = grandTotal > 0 ? (grandWins / grandTotal) * 100 : 0;
   const grandWinRateStr = grandTotal > 0 ? `${grandWinRate.toFixed(0)}%` : "-";
+  const jpySuffix = anyJpy
+    ? `  │  ${c.bold}Total P&L (JPY):${c.reset} ${colorProfit(grandTotalProfitJPY)}`
+    : "";
   console.log(
-    `  ${c.bold}Total P&L:${c.reset} ${colorProfit(grandTotalProfit)}  │  ${c.bold}Win Rate:${c.reset} ${grandWinRateStr} (${grandWins}W / ${grandLosses}L)`,
+    `  ${c.bold}Total P&L:${c.reset} ${colorProfit(grandTotalProfit)}${jpySuffix}  │  ${c.bold}Win Rate:${c.reset} ${grandWinRateStr} (${grandWins}W / ${grandLosses}L)`,
   );
 }
 
-function renderSummary(news: NewsItem[], trades: TradeItem[], state: StateItem | null): void {
+function renderTotalAssets(positions: PositionItem[]): void {
+  printHeader("TOTAL ASSETS");
+
+  const totalInvestedJPY = positions.reduce((sum, p) => sum + (p.TotalInvestedJPY ?? 0), 0);
+
+  if (positions.length === 0) {
+    console.log(`  ${c.dim}No position data available${c.reset}`);
+  } else {
+    console.log(
+      `  ${c.bold}Total Invested:${c.reset}  ${c.green}¥${totalInvestedJPY.toLocaleString("ja-JP")}${c.reset}`,
+    );
+    console.log(`  ${c.bold}Open Positions:${c.reset}  ${positions.length}`);
+  }
+}
+
+function renderSummary(
+  news: NewsItem[],
+  trades: TradeItem[],
+  state: StateItem | null,
+  positions: PositionItem[],
+): void {
   printHeader("DASHBOARD SUMMARY");
 
   const now = new Date().toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" });
@@ -471,6 +591,7 @@ function renderSummary(news: NewsItem[], trades: TradeItem[], state: StateItem |
   console.log(`  ${c.bold}Table:${c.reset}         ${tableName}`);
   console.log(`  ${c.bold}News Items:${c.reset}    ${news.length}`);
   console.log(`  ${c.bold}Trade Items:${c.reset}   ${trades.length}`);
+  console.log(`  ${c.bold}Positions:${c.reset}     ${positions.length}`);
   console.log(`  ${c.bold}System State:${c.reset}  ${state ? "Active" : "No data"}`);
 }
 
@@ -490,17 +611,20 @@ async function main(): Promise<void> {
   );
 
   try {
-    const [news, trades, state] = await Promise.all([
+    const [news, trades, state, positions] = await Promise.all([
       fetchNews(limit),
       fetchTrades(limit),
       fetchState(),
+      fetchPositions(),
     ]);
 
-    renderSummary(news, trades, state);
+    renderSummary(news, trades, state, positions);
     renderSystemStatus(state);
     renderNewsTable(news);
     renderTradesTable(trades);
+    renderPositionsTable(positions);
     renderProfitSummary(trades);
+    renderTotalAssets(positions);
 
     console.log(
       `\n${c.dim}Tip: Run with a number to change limit, e.g. \`npm run dashboard -- 100\`${c.reset}\n`,

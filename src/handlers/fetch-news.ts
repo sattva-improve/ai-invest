@@ -26,6 +26,27 @@ async function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+const LOW_QUALITY_PATTERNS = [
+  /sponsored/i,
+  /advertisement/i,
+  /\bad\b/i,
+  /opinion:/i,
+  /editorial:/i,
+  /column:/i,
+  /recap:/i,
+  /weekly\s+roundup/i,
+  /daily\s+roundup/i,
+  /weekly\s+recap/i,
+  /daily\s+recap/i,
+  /top\s+\d+\s+(stories|articles|news)/i,
+  /press\s+release/i,
+  /\bPR\b:/,
+];
+
+function isLowQualityArticle(title: string): boolean {
+  return LOW_QUALITY_PATTERNS.some((pattern) => pattern.test(title));
+}
+
 export async function fetchNewsHandler(config: AppConfig): Promise<FetchNewsHandlerResult> {
   const log = logger.child({ handler: "fetch-news" });
   log.info("Starting news fetch cycle");
@@ -38,8 +59,8 @@ export async function fetchNewsHandler(config: AppConfig): Promise<FetchNewsHand
     maxItemsPerFeed: 10,
   });
 
-  // 1サイクルあたり最大3件のみ分析（Lambda 60sタイムアウト対策）
-  const MAX_ARTICLES_PER_CYCLE = 3;
+  // 1サイクルあたりの最大分析件数（Lambda 60sタイムアウト対策、env設定可能）
+  const maxArticles = env.MAX_ARTICLES_PER_CYCLE;
   // 記事間の待機時間（ms）: Copilot API制限対策
   const INTER_ARTICLE_DELAY_MS = 2000;
   log.info({ count: articles.length }, "Articles fetched");
@@ -49,8 +70,8 @@ export async function fetchNewsHandler(config: AppConfig): Promise<FetchNewsHand
   let highConfidence = 0;
 
   for (const article of articles) {
-    if (analyzed >= MAX_ARTICLES_PER_CYCLE) {
-      log.info({ limit: MAX_ARTICLES_PER_CYCLE }, "Reached per-cycle analysis limit, stopping");
+    if (analyzed >= maxArticles) {
+      log.info({ limit: maxArticles }, "Reached per-cycle analysis limit, stopping");
       break;
     }
     try {
@@ -58,6 +79,12 @@ export async function fetchNewsHandler(config: AppConfig): Promise<FetchNewsHand
       const existing = await findByUrl(article.url);
       if (existing) {
         log.debug({ url: article.url }, "Article already processed, skipping");
+        skipped++;
+        continue;
+      }
+
+      if (isLowQualityArticle(article.title)) {
+        log.debug({ title: article.title }, "Low-quality article filtered out");
         skipped++;
         continue;
       }
@@ -73,7 +100,7 @@ export async function fetchNewsHandler(config: AppConfig): Promise<FetchNewsHand
 
       await saveNewsItem(article, decision.confidence);
 
-      if (decision.confidence > env.CONFIDENCE_THRESHOLD) {
+      if (decision.confidence >= env.CONFIDENCE_THRESHOLD) {
         highConfidence++;
         const isCrypto = config.tradingPairs.some(
           (p) => p.assetType === "crypto" && p.symbol === decision.ticker,

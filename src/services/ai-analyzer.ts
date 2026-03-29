@@ -4,9 +4,17 @@ import { generateObject } from "ai";
 import { env } from "../config/env.js";
 import { logger } from "../lib/logger.js";
 import { getTracer } from "../lib/tracer.js";
+import { getAllPositions } from "../repositories/position-repository.js";
 import { type InvestmentDecision, InvestmentDecisionSchema } from "../schemas/ai.js";
 import type { MarketData } from "../schemas/market.js";
 import type { NewsArticle } from "../schemas/news.js";
+
+interface PromptPosition {
+  ticker: string;
+  amount: number;
+  avgBuyPrice: number;
+  currency: string;
+}
 
 function getModel() {
   if (!env.GITHUB_TOKEN) {
@@ -23,6 +31,7 @@ function getModel() {
 export interface AnalyzeNewsOptions {
   article: NewsArticle;
   marketData?: MarketData;
+  positions?: Array<{ ticker: string; amount: number; avgBuyPrice: number; currency: string }>;
 }
 
 function extractRetryAfterMs(err: unknown): number {
@@ -150,7 +159,16 @@ export async function analyzeNews(options: AnalyzeNewsOptions): Promise<Investme
       span.setAttribute("ai.model", env.GITHUB_MODEL_ID);
       span.setAttribute("ai.ticker", article.url);
 
-      const prompt = buildPrompt(article, marketData);
+      const positions =
+        options.positions ??
+        (await getAllPositions()).map((position) => ({
+          ticker: position.Ticker,
+          amount: position.Amount,
+          avgBuyPrice: position.AvgBuyPrice,
+          currency: position.Currency,
+        }));
+
+      const prompt = buildPrompt(article, marketData, positions);
       const result = await generateWithRetry(async () => {
         const { object } = await generateObject({
           model: getModel(),
@@ -169,7 +187,10 @@ export async function analyzeNews(options: AnalyzeNewsOptions): Promise<Investme
         },
         "News analysis completed",
       );
-      return result;
+      return {
+        ...result,
+        promptVersion: "v2-jpy-max",
+      };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       span.setStatus({ code: SpanStatusCode.ERROR, message });
@@ -184,9 +205,15 @@ export const __testables = {
   isDailyTokenQuotaError,
 };
 
-function buildPrompt(article: NewsArticle, marketData?: MarketData): string {
+function buildPrompt(
+  article: NewsArticle,
+  marketData?: MarketData,
+  positions?: PromptPosition[],
+): string {
   const parts = [
-    "You are an expert financial analyst. Analyze the following news article and provide an investment decision.",
+    "You are a JPY-maximization trading advisor.",
+    "Your PRIMARY OBJECTIVE is to maximize total JPY holdings over time through disciplined spot trading decisions.",
+    "Optimize expected JPY-denominated return, not news-topic relevance.",
     "",
     `Title: ${article.title}`,
     `Source: ${article.source}`,
@@ -202,10 +229,39 @@ function buildPrompt(article: NewsArticle, marketData?: MarketData): string {
       "Current Market Data:",
       `  Symbol: ${marketData.symbol}`,
       `  Price: ${marketData.price}`,
-      `  Volume: ${marketData.volume}`,
+      `  Volume (24h): ${marketData.volume}`,
       `  RSI (14): ${marketData.rsi ?? "N/A"}`,
+      `  SMA-20: ${marketData.sma20 ?? "N/A"}`,
+      `  SMA-50: ${marketData.sma50 ?? "N/A"}`,
+      `  MACD: ${marketData.macd ?? "N/A"}`,
+      `  MACD Signal: ${marketData.macdSignal ?? "N/A"}`,
+      `  MACD Histogram: ${marketData.macdHistogram ?? "N/A"}`,
+      `  Bollinger Upper: ${marketData.bollingerUpper ?? "N/A"}`,
+      `  Bollinger Lower: ${marketData.bollingerLower ?? "N/A"}`,
       `  As of: ${marketData.timestamp}`,
       `  Exchange: ${marketData.exchange ?? "unknown"}`,
+    );
+
+    parts.push(
+      "",
+      "Technical Indicator Hints:",
+      "- RSI > 70 = overbought (potential SELL), RSI < 30 = oversold (potential BUY)",
+      "- Price above SMA-50 = bullish trend, below = bearish",
+      "- MACD crossing above signal = bullish, below = bearish",
+      "- Price near Bollinger lower = potential BUY, near upper = potential SELL",
+    );
+  }
+
+  if (positions && positions.length > 0) {
+    parts.push("", "Current Portfolio:");
+    for (const position of positions) {
+      parts.push(
+        `  ${position.ticker}: ${position.amount} @ avg ${position.avgBuyPrice} ${position.currency}`,
+      );
+    }
+    parts.push(
+      "",
+      "Consider portfolio concentration. Avoid adding to positions that already represent a large share of the portfolio.",
     );
   }
 
@@ -217,16 +273,25 @@ function buildPrompt(article: NewsArticle, marketData?: MarketData): string {
     "Available JPY pairs: BTC/JPY, ETH/JPY, BNB/JPY",
     "Available BTC pairs: ETH/BTC, SOL/BTC, XRP/BTC, BNB/BTC, ADA/BTC, DOGE/BTC, AVAX/BTC, DOT/BTC, LINK/BTC",
     "",
-    "Rules for ticker selection:",
-    "- Choose the pair that best matches the news subject.",
+    "JPY-Maximization Decision Framework:",
+    "- Select the ticker/action with the highest probability of generating positive JPY profit.",
+    "- For BTC-denominated pairs, account for both (1) alt/BTC move and (2) BTC/JPY move before deciding expected JPY return.",
+    "- When expected JPY return is similar, prefer JPY pairs for simpler execution and lower double-currency risk.",
+    "- Use HOLD when no clear JPY edge exists or signals conflict.",
+    "- Consider current positions and avoid over-concentration in one asset.",
     "- If the news is about Bitcoin itself, use BTC/JPY for direct exposure.",
-    "- If the news is about an altcoin available as a JPY pair (ETH, BNB), prefer the JPY pair for simpler execution.",
     "- If the news is about an altcoin only available as a BTC pair (SOL, XRP, ADA, etc.), use the BTC pair.",
     "- Do NOT output USDT pairs. Do NOT output pairs not listed above.",
     "",
     "Position and leverage:",
     "- positionSide: Always LONG (spot trading only, no short selling)",
     "- leverage: Always 1 (spot trading, no leverage)",
+    "",
+    "Confidence Calibration:",
+    "- 0.9-1.0: Multiple strong signals aligned (news + technicals + trend)",
+    "- 0.8-0.9: Strong signal in one area, supporting signal in another",
+    "- 0.6-0.8: Mixed signals or single moderate signal",
+    "- Below 0.6: Weak or conflicting signals (HOLD is appropriate)",
     "",
     "Provide a structured investment decision with:",
     "- ticker: A trading pair from the lists above (e.g., BTC/JPY, ETH/BTC)",
@@ -238,6 +303,7 @@ function buildPrompt(article: NewsArticle, marketData?: MarketData): string {
     "- targetPrice: Optional price target in the quote currency (JPY or BTC)",
     "- riskLevel: LOW, MEDIUM, or HIGH",
     "- timeHorizon: SHORT (hours/days), MEDIUM (weeks), or LONG (months)",
+    "- promptVersion: v2-jpy-max",
   );
 
   return parts.join("\n");

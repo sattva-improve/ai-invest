@@ -1,3 +1,5 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
 const mockGetCryptoMarketData = vi.fn();
 const mockGetStockMarketData = vi.fn();
 
@@ -31,6 +33,11 @@ const testConfig: AppConfig = {
   fetchIntervalMinutes: 60,
   priceIntervalMinutes: 5,
   maxOrderValueBtc: 0.001,
+  maxOrderValueJpy: 200,
+  maxAllocationPercent: 0.05,
+  maxLeverage: 1,
+  marginMode: "isolated",
+  enableShortSelling: false,
 };
 
 describe("fetchPriceHandler", () => {

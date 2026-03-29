@@ -1,6 +1,9 @@
 import { PutCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
+import { logger } from "../lib/logger.js";
 import type { InvestmentDecision } from "../schemas/ai.js";
 import { TABLE_NAME, dynamoClient } from "./dynamo-client.js";
+
+const log = logger.child({ repository: "trade" });
 
 export interface TradeItem {
   PK: string;
@@ -12,6 +15,9 @@ export interface TradeItem {
   Price: number;
   Leverage: number;
   Profit: number;
+  Currency?: string;
+  ProfitJPY?: number;
+  ConversionRate?: number;
   OrderId: string;
   Status: "OPEN" | "CLOSED" | "PAPER";
   Confidence: number;
@@ -23,11 +29,23 @@ export interface SaveTradeOptions {
   executedPrice: number;
   orderId: string;
   profit?: number;
+  currency?: string;
+  profitJpy?: number;
+  conversionRate?: number;
   isPaper?: boolean;
 }
 
 export async function saveTradeItem(options: SaveTradeOptions): Promise<TradeItem> {
-  const { decision, executedPrice, orderId, profit = 0, isPaper = false } = options;
+  const {
+    decision,
+    executedPrice,
+    orderId,
+    profit = 0,
+    currency,
+    profitJpy,
+    conversionRate,
+    isPaper = false,
+  } = options;
   const now = new Date().toISOString();
   const sk = `${now}#${orderId}`;
 
@@ -41,6 +59,9 @@ export async function saveTradeItem(options: SaveTradeOptions): Promise<TradeIte
     Price: executedPrice,
     Leverage: decision.leverage ?? 1,
     Profit: profit,
+    Currency: currency,
+    ProfitJPY: profitJpy,
+    ConversionRate: conversionRate,
     OrderId: orderId,
     Status: isPaper ? "PAPER" : "OPEN",
     Confidence: decision.confidence,
@@ -77,21 +98,42 @@ export async function getLastTradeByTickerAndSide(
   ticker: string,
   side: "BUY" | "SELL",
 ): Promise<TradeItem | null> {
-  const result = await dynamoClient.send(
-    new QueryCommand({
-      TableName: TABLE_NAME,
-      KeyConditionExpression: "PK = :pk",
-      FilterExpression: "Ticker = :ticker AND Side = :side",
-      ExpressionAttributeValues: {
-        ":pk": "TRADE",
-        ":ticker": ticker,
-        ":side": side,
-      },
-      ScanIndexForward: false,
-      Limit: 10,
-    }),
-  );
+  const pageLimit = 50;
+  const maxPages = 5;
+  let lastEvaluatedKey: Record<string, unknown> | undefined;
 
-  const items = (result.Items ?? []) as TradeItem[];
-  return items.length > 0 ? items[0] : null;
+  for (let page = 1; page <= maxPages; page++) {
+    const result = await dynamoClient.send(
+      new QueryCommand({
+        TableName: TABLE_NAME,
+        KeyConditionExpression: "PK = :pk",
+        FilterExpression: "Ticker = :ticker AND Side = :side",
+        ExpressionAttributeValues: {
+          ":pk": "TRADE",
+          ":ticker": ticker,
+          ":side": side,
+        },
+        ScanIndexForward: false,
+        Limit: pageLimit,
+        ExclusiveStartKey: lastEvaluatedKey,
+      }),
+    );
+
+    const items = (result.Items ?? []) as TradeItem[];
+    if (items.length > 0) {
+      return items[0];
+    }
+
+    if (!result.LastEvaluatedKey) {
+      return null;
+    }
+
+    lastEvaluatedKey = result.LastEvaluatedKey;
+  }
+
+  log.warn(
+    { ticker, side, maxPages, pageLimit },
+    "Reached max pages while searching last trade by ticker and side",
+  );
+  return null;
 }

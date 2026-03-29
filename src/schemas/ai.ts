@@ -22,6 +22,10 @@ export const InvestmentDecisionSchema = z.object({
     .enum(["SHORT", "MEDIUM", "LONG"])
     .default("SHORT")
     .describe("Expected time horizon for the trade"),
+  promptVersion: z
+    .string()
+    .default("v2-jpy-max")
+    .describe("Version of the prompt that generated this decision"),
 });
 
 export type InvestmentDecision = z.infer<typeof InvestmentDecisionSchema>;

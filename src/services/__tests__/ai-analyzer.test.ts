@@ -1,8 +1,11 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
 const { mockGithub } = vi.hoisted(() => ({
   mockGithub: vi.fn(() => "mock-model"),
 }));
 
 const mockGenerateObject = vi.fn();
+const mockGetAllPositions = vi.fn();
 
 vi.mock("ai", () => ({
   generateObject: (...args: unknown[]) => mockGenerateObject(...args),
@@ -20,6 +23,10 @@ vi.mock("../../config/env.js", () => ({
 
 vi.mock("@ai-sdk/openai-compatible", () => ({
   createOpenAICompatible: vi.fn(() => mockGithub),
+}));
+
+vi.mock("../../repositories/position-repository.js", () => ({
+  getAllPositions: (...args: unknown[]) => mockGetAllPositions(...args),
 }));
 
 import type { MarketData } from "../../schemas/market.js";
@@ -57,6 +64,7 @@ const decision = {
 describe("analyzeNews", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockGetAllPositions.mockResolvedValue([]);
   });
 
   it("returns InvestmentDecision from model", async () => {
@@ -64,7 +72,8 @@ describe("analyzeNews", () => {
 
     const result = await analyzeNews({ article: testArticle });
 
-    expect(result).toEqual(decision);
+    expect(result).toEqual({ ...decision, promptVersion: "v2-jpy-max" });
+    expect(mockGetAllPositions).toHaveBeenCalledTimes(1);
     expect(mockGenerateObject).toHaveBeenCalledTimes(1);
   });
 
@@ -76,11 +85,14 @@ describe("analyzeNews", () => {
       marketData: testMarketData,
     });
 
-    expect(result).toEqual(decision);
+    expect(result).toEqual({ ...decision, promptVersion: "v2-jpy-max" });
     expect(mockGenerateObject).toHaveBeenCalledTimes(1);
     const callArgs = mockGenerateObject.mock.calls[0][0];
     expect(callArgs.prompt).toContain("ETH/BTC");
     expect(callArgs.prompt).toContain("0.035");
+    expect(callArgs.prompt).toContain("SMA-20");
+    expect(callArgs.prompt).toContain("MACD");
+    expect(callArgs.prompt).toContain("Bollinger Upper");
   });
 
   it("works without marketData", async () => {
@@ -91,7 +103,44 @@ describe("analyzeNews", () => {
       marketData: undefined,
     });
 
-    expect(result).toEqual(decision);
+    expect(result).toEqual({ ...decision, promptVersion: "v2-jpy-max" });
     expect(mockGenerateObject).toHaveBeenCalledTimes(1);
+  });
+
+  it("includes fetched portfolio positions in prompt", async () => {
+    mockGenerateObject.mockResolvedValue({ object: decision });
+    mockGetAllPositions.mockResolvedValue([
+      {
+        PK: "POSITION",
+        SK: "ETH/JPY",
+        type: "POSITION_ITEM",
+        Ticker: "ETH/JPY",
+        Amount: 2,
+        AvgBuyPrice: 420000,
+        TotalInvested: 840000,
+        Currency: "JPY",
+        TotalInvestedJPY: 840000,
+        UpdatedAt: "2026-01-15T10:30:00.000Z",
+      },
+    ]);
+
+    await analyzeNews({ article: testArticle });
+
+    const callArgs = mockGenerateObject.mock.calls[0][0];
+    expect(callArgs.prompt).toContain("Current Portfolio:");
+    expect(callArgs.prompt).toContain("ETH/JPY: 2 @ avg 420000 JPY");
+  });
+
+  it("uses provided positions instead of repository positions", async () => {
+    mockGenerateObject.mockResolvedValue({ object: decision });
+
+    await analyzeNews({
+      article: testArticle,
+      positions: [{ ticker: "BTC/JPY", amount: 0.1, avgBuyPrice: 10000000, currency: "JPY" }],
+    });
+
+    expect(mockGetAllPositions).not.toHaveBeenCalled();
+    const callArgs = mockGenerateObject.mock.calls[0][0];
+    expect(callArgs.prompt).toContain("BTC/JPY: 0.1 @ avg 10000000 JPY");
   });
 });

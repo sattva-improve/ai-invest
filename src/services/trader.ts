@@ -1,8 +1,10 @@
 import { SpanStatusCode } from "@opentelemetry/api";
 import ccxt from "ccxt";
 import { env } from "../config/env.js";
+import { convertToJpy, getBtcJpyRate, getQuoteCurrency } from "../lib/currency-converter.js";
 import { logger } from "../lib/logger.js";
 import { getTracer } from "../lib/tracer.js";
+import { addToPosition, reducePosition } from "../repositories/position-repository.js";
 import { updateState } from "../repositories/state-repository.js";
 import { type SaveTradeOptions, saveTradeItem } from "../repositories/trade-repository.js";
 import type { InvestmentDecision } from "../schemas/ai.js";
@@ -10,6 +12,13 @@ import type { AppConfig } from "../schemas/config.js";
 import { type OrderRequest, type OrderResult, OrderResultSchema } from "../schemas/trade.js";
 
 const log = logger.child({ service: "trader" });
+
+interface ProfitInfo {
+  profit: number;
+  currency: string;
+  profitJpy?: number;
+  conversionRate?: number;
+}
 
 function executePaperTrade(request: OrderRequest): OrderResult {
   const executedPrice = request.price ?? 0;
@@ -92,7 +101,7 @@ export async function executeTrade(
   request: OrderRequest,
   _config: AppConfig,
   decision: InvestmentDecision,
-  profit = 0,
+  profitInfo: ProfitInfo = { profit: 0, currency: "UNKNOWN" },
 ): Promise<OrderResult> {
   const tracer = getTracer();
   return tracer.startActiveSpan("trade.execute", async (span) => {
@@ -122,9 +131,55 @@ export async function executeTrade(
         executedPrice: result.executedPrice,
         orderId: result.orderId,
         isPaper: result.isPaperTrade,
-        profit,
+        profit: profitInfo.profit,
+        currency: profitInfo.currency,
+        profitJpy: profitInfo.profitJpy,
+        conversionRate: profitInfo.conversionRate,
       };
       await saveTradeItem(saveOptions);
+
+      try {
+        if (request.side === "buy") {
+          const quoteCurrency = getQuoteCurrency(request.symbol);
+          const amountInQuoteCurrency = result.amount * result.executedPrice;
+          let jpyEquivalent = amountInQuoteCurrency;
+
+          if (quoteCurrency === "BTC") {
+            const btcJpyRate = await getBtcJpyRate();
+            const converted = convertToJpy(
+              amountInQuoteCurrency,
+              quoteCurrency,
+              btcJpyRate ?? undefined,
+            );
+            if (converted == null) {
+              throw new Error("Failed to convert BTC position value to JPY");
+            }
+            jpyEquivalent = converted;
+          } else if (quoteCurrency === "JPY") {
+            jpyEquivalent = amountInQuoteCurrency;
+          } else {
+            const converted = convertToJpy(amountInQuoteCurrency, quoteCurrency);
+            if (converted != null) {
+              jpyEquivalent = converted;
+            }
+          }
+
+          await addToPosition(
+            request.symbol,
+            result.amount,
+            result.executedPrice,
+            quoteCurrency,
+            jpyEquivalent,
+          );
+        } else if (request.side === "sell") {
+          await reducePosition(request.symbol, result.amount);
+        }
+      } catch (positionError) {
+        log.error(
+          { error: positionError, symbol: request.symbol, side: request.side },
+          "Position tracking failed after successful trade",
+        );
+      }
 
       const tradeValue = result.executedPrice * result.amount;
       await updateState(tradeValue);

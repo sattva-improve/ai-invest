@@ -43,6 +43,11 @@ const envSchema = z.object({
     .transform((v) => Number.parseFloat(v))
     .pipe(z.number().positive())
     .default("200"),
+  MAX_ALLOCATION_PERCENT: z
+    .string()
+    .transform((v) => Number.parseFloat(v))
+    .pipe(z.number().min(0.01).max(1))
+    .default("0.05"),
   MAX_LEVERAGE: z
     .string()
     .transform((v) => Number.parseInt(v, 10))
@@ -53,6 +58,11 @@ const envSchema = z.object({
     .string()
     .transform((v) => v === "true")
     .default("false"),
+  MAX_ARTICLES_PER_CYCLE: z
+    .string()
+    .transform((v) => Number.parseInt(v, 10))
+    .pipe(z.number().int().min(1).max(20))
+    .default("5"),
 });
 
 export type Env = z.infer<typeof envSchema>;

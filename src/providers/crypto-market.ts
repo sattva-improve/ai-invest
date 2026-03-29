@@ -23,6 +23,48 @@ function calculateRsi(ohlcv: number[][], period = 14): number | undefined {
   return 100 - 100 / (1 + rs);
 }
 
+function calculateSma(closes: number[], period: number): number | undefined {
+  if (closes.length < period) return undefined;
+  const slice = closes.slice(-period);
+  return slice.reduce((sum, v) => sum + v, 0) / period;
+}
+
+function calculateEma(values: number[], period: number): number[] {
+  if (values.length < period) return [];
+  const k = 2 / (period + 1);
+  const ema: number[] = [];
+  ema[0] = values.slice(0, period).reduce((s, v) => s + v, 0) / period;
+  for (let i = 1; i < values.length - period + 1; i++) {
+    ema[i] = values[period - 1 + i] * k + ema[i - 1] * (1 - k);
+  }
+  return ema;
+}
+
+function calculateMacd(closes: number[]): { macd?: number; signal?: number; histogram?: number } {
+  if (closes.length < 35) return {};
+  const ema12 = calculateEma(closes, 12);
+  const ema26 = calculateEma(closes, 26);
+  const offset = ema12.length - ema26.length;
+  const macdLine = ema26.map((val, i) => ema12[i + offset] - val);
+  if (macdLine.length < 9) return {};
+  const signalLine = calculateEma(macdLine, 9);
+  const macd = macdLine[macdLine.length - 1];
+  const signal = signalLine[signalLine.length - 1];
+  return { macd, signal, histogram: macd - signal };
+}
+
+function calculateBollingerBands(
+  closes: number[],
+  period = 20,
+): { upper?: number; lower?: number } {
+  if (closes.length < period) return {};
+  const slice = closes.slice(-period);
+  const mean = slice.reduce((s, v) => s + v, 0) / period;
+  const variance = slice.reduce((s, v) => s + (v - mean) ** 2, 0) / period;
+  const stddev = Math.sqrt(variance);
+  return { upper: mean + 2 * stddev, lower: mean - 2 * stddev };
+}
+
 export async function getCryptoMarketData(symbol: string): Promise<MarketData | null> {
   const cacheKey = `market:crypto:${symbol}`;
   const cached = await cacheGet<MarketData>(cacheKey);
@@ -39,18 +81,30 @@ export async function getCryptoMarketData(symbol: string): Promise<MarketData | 
       throw new Error(`Exchange '${exchangeId}' not found in ccxt`);
     }
     const exchange = new ExchangeClass({ enableRateLimit: true });
-    const ohlcv = (await exchange.fetchOHLCV(symbol, "1h", undefined, 50)) as number[][];
+    const ohlcv = (await exchange.fetchOHLCV(symbol, "1h", undefined, 100)) as number[][];
     if (!ohlcv || ohlcv.length === 0) return null;
 
     const latest = ohlcv[ohlcv.length - 1];
     const price = latest[4]; // close
     const volume = latest[5]; // volume
     const rsi = calculateRsi(ohlcv);
+    const closes = ohlcv.map((c) => c[4]);
+    const sma20 = calculateSma(closes, 20);
+    const sma50 = calculateSma(closes, 50);
+    const { macd, signal: macdSignal, histogram: macdHistogram } = calculateMacd(closes);
+    const { upper: bollingerUpper, lower: bollingerLower } = calculateBollingerBands(closes);
 
     const data = MarketDataSchema.parse({
       symbol,
       price,
       rsi,
+      sma20,
+      sma50,
+      macd,
+      macdSignal,
+      macdHistogram,
+      bollingerUpper,
+      bollingerLower,
       volume,
       timestamp: new Date(latest[0]).toISOString(),
       exchange: exchangeId,
@@ -58,7 +112,7 @@ export async function getCryptoMarketData(symbol: string): Promise<MarketData | 
     });
 
     await cacheSet(cacheKey, data, CACHE_TTL);
-    logger.info({ symbol, price, rsi }, "Crypto market data fetched");
+    logger.info({ symbol, price, rsi, sma20, sma50, macd }, "Crypto market data fetched");
     return data;
   } catch (error) {
     logger.warn({ error, symbol }, "Failed to fetch crypto market data");

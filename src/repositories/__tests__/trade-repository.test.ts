@@ -1,3 +1,5 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
 const mockSend = vi.fn();
 
 vi.mock("../../repositories/dynamo-client.js", () => ({
@@ -16,11 +18,17 @@ vi.mock("../../config/env.js", () => ({
 }));
 
 import type { InvestmentDecision } from "../../schemas/ai.js";
-import { listRecentTrades, saveTradeItem } from "../trade-repository.js";
+import {
+  getLastTradeByTickerAndSide,
+  listRecentTrades,
+  saveTradeItem,
+} from "../trade-repository.js";
 
 const testDecision: InvestmentDecision = {
   ticker: "ETH/BTC",
   action: "BUY",
+  positionSide: "LONG",
+  leverage: 1,
   confidence: 0.9,
   reasoning: "Strong bullish momentum",
   riskLevel: "MEDIUM",
@@ -35,7 +43,7 @@ describe("saveTradeItem", () => {
   it("calls PutCommand with PK='TRADE'", async () => {
     mockSend.mockResolvedValue({});
 
-    const result = await saveTradeItem({
+    await saveTradeItem({
       decision: testDecision,
       executedPrice: 50000,
       orderId: "order-123",
@@ -120,5 +128,64 @@ describe("listRecentTrades", () => {
     const result = await listRecentTrades();
 
     expect(result).toEqual([]);
+  });
+});
+
+describe("getLastTradeByTickerAndSide", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("paginates until match is found", async () => {
+    mockSend
+      .mockResolvedValueOnce({
+        Items: [],
+        LastEvaluatedKey: { PK: "TRADE", SK: "2026-01-01T00:00:00.000Z#order-1" },
+      })
+      .mockResolvedValueOnce({
+        Items: [
+          {
+            PK: "TRADE",
+            SK: "2026-01-01T00:01:00.000Z#order-2",
+            type: "TRADE_ITEM",
+            Ticker: "ETH/BTC",
+            Side: "BUY",
+            PositionSide: "LONG",
+            Price: 0.03,
+            Leverage: 1,
+            Profit: 0,
+            OrderId: "order-2",
+            Status: "PAPER",
+            Confidence: 0.9,
+            CreatedAt: "2026-01-01T00:01:00.000Z",
+          },
+        ],
+      });
+
+    const result = await getLastTradeByTickerAndSide("ETH/BTC", "BUY");
+
+    expect(mockSend).toHaveBeenCalledTimes(2);
+    expect(mockSend.mock.calls[0][0].input.ExclusiveStartKey).toBeUndefined();
+    expect(mockSend.mock.calls[1][0].input.ExclusiveStartKey).toEqual({
+      PK: "TRADE",
+      SK: "2026-01-01T00:00:00.000Z#order-1",
+    });
+    expect(result?.OrderId).toBe("order-2");
+  });
+
+  it("returns null when no match found across all pages", async () => {
+    mockSend
+      .mockResolvedValueOnce({
+        Items: [],
+        LastEvaluatedKey: { PK: "TRADE", SK: "2026-01-01T00:00:00.000Z#order-1" },
+      })
+      .mockResolvedValueOnce({
+        Items: [],
+      });
+
+    const result = await getLastTradeByTickerAndSide("ETH/BTC", "SELL");
+
+    expect(mockSend).toHaveBeenCalledTimes(2);
+    expect(result).toBeNull();
   });
 });
