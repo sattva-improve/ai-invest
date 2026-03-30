@@ -34,3 +34,6 @@ credentials
 credentials.*
 *.credentials
 aws-credentials/
+
+# Lambda deployment artifacts
+lambda-deployment.zip
