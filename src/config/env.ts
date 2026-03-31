@@ -63,6 +63,38 @@ const envSchema = z.object({
     .transform((v) => Number.parseInt(v, 10))
     .pipe(z.number().int().min(1).max(20))
     .default("5"),
+
+  // Scalping
+  SCALP_ENABLED: z
+    .string()
+    .transform((v) => v === "true")
+    .default("false"),
+  SCALP_INTERVAL_MINUTES: z
+    .string()
+    .transform((v) => Number.parseInt(v, 10))
+    .pipe(z.number().int().min(1).max(60))
+    .default("5"),
+  SCALP_CONFIDENCE_THRESHOLD: z
+    .string()
+    .transform((v) => Number.parseFloat(v))
+    .pipe(z.number().min(0).max(1))
+    .default("0.75"),
+  SCALP_MODEL_ID: z.string().default("openai/gpt-4.1-mini"),
+  SCALP_MAX_PAIRS_PER_CYCLE: z
+    .string()
+    .transform((v) => Number.parseInt(v, 10))
+    .pipe(z.number().int().min(1).max(12))
+    .default("4"),
+  SCALP_STOPLOSS_MONITOR_SECONDS: z
+    .string()
+    .transform((v) => Number.parseInt(v, 10))
+    .pipe(z.number().int().min(10).max(300))
+    .default("30"),
+  SCALP_ATR_MULTIPLIER: z
+    .string()
+    .transform((v) => Number.parseFloat(v))
+    .pipe(z.number().min(0.5).max(5))
+    .default("2.0"),
 });
 
 export type Env = z.infer<typeof envSchema>;

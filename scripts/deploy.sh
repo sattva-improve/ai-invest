@@ -90,6 +90,13 @@ aws cloudformation deploy \
     "GitHubToken=${GITHUB_TOKEN}" \
     "MaxLeverage=${MAX_LEVERAGE:-1}" \
     "EnableShortSelling=${ENABLE_SHORT_SELLING:-false}" \
+    "ScalpEnabled=${SCALP_ENABLED:-false}" \
+    "ScalpIntervalMinutes=${SCALP_INTERVAL_MINUTES:-5}" \
+    "ScalpConfidenceThreshold=${SCALP_CONFIDENCE_THRESHOLD:-0.75}" \
+    "ScalpModelId=${SCALP_MODEL_ID:-openai/gpt-4.1-mini}" \
+    "ScalpMaxPairsPerCycle=${SCALP_MAX_PAIRS_PER_CYCLE:-4}" \
+    "ScalpStoplossMonitorSeconds=${SCALP_STOPLOSS_MONITOR_SECONDS:-30}" \
+    "ScalpAtrMultiplier=${SCALP_ATR_MULTIPLIER:-2.0}" \
     ${GITHUB_MODEL_ID:+"GitHubModelId=${GITHUB_MODEL_ID}"} \
   --tags \
     "Project=ai-invest" \

@@ -3,6 +3,8 @@ import { TRADING_PAIRS } from "../config/trading-pairs.js";
 import { createFetchNewsWorker } from "../jobs/fetch-news-job.js";
 import { createFetchPriceWorker } from "../jobs/fetch-price-job.js";
 import { setupQueues, teardownQueues } from "../jobs/queue.js";
+import { createScalpAnalyzeWorker } from "../jobs/scalp-analyze-job.js";
+import { createStopLossMonitorWorker } from "../jobs/stop-loss-monitor-job.js";
 import { logger } from "../lib/logger.js";
 import { closeRedis } from "../lib/redis-client.js";
 import type { AppConfig } from "../schemas/config.js";
@@ -24,18 +26,32 @@ export async function main(): Promise<void> {
   // Start workers
   const newsWorker = createFetchNewsWorker(config);
   const priceWorker = createFetchPriceWorker(config);
+  const scalpWorker = config.scalpEnabled ? createScalpAnalyzeWorker(config) : null;
+  const stopLossWorker = config.scalpEnabled ? createStopLossMonitorWorker(config) : null;
 
   // Setup queues with repeatable jobs
-  const { newsQueue, priceQueue } = await setupQueues(config);
+  const { newsQueue, priceQueue, scalpQueue, stopLossQueue } = await setupQueues(config);
 
   log.info("Trading bot started. Press Ctrl+C to stop.");
+
+  if (config.scalpEnabled) {
+    log.info(
+      {
+        scalpInterval: config.scalpIntervalMinutes,
+        stopLossInterval: config.scalpStoplossMonitorSeconds,
+      },
+      "Scalping system enabled",
+    );
+  }
 
   // Graceful shutdown
   const shutdown = async (): Promise<void> => {
     log.info("Shutting down...");
     await newsWorker.close();
     await priceWorker.close();
-    await teardownQueues(newsQueue, priceQueue);
+    if (scalpWorker) await scalpWorker.close();
+    if (stopLossWorker) await stopLossWorker.close();
+    await teardownQueues(newsQueue, priceQueue, scalpQueue, stopLossQueue);
     await closeRedis();
     log.info("Shutdown complete");
     process.exit(0);

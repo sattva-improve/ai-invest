@@ -168,6 +168,41 @@ interface StateItem {
   UpdatedAt: string;
 }
 
+interface ScalpTradeItem {
+  PK: string;
+  SK: string;
+  Ticker: string;
+  Side: string;
+  Price: number;
+  StopLossPrice: number;
+  TakeProfitPrice?: number;
+  Profit: number;
+  ProfitJPY?: number;
+  Currency: string;
+  ConversionRate?: number;
+  OrderId: string;
+  Status: string;
+  Confidence: number;
+  EntryTimeframe: string;
+  TrendAlignment: string;
+  Signals: string;
+  CreatedAt: string;
+}
+
+interface StopLossItem {
+  PK: string;
+  SK: string;
+  Ticker: string;
+  EntryPrice: number;
+  StopLossPrice: number;
+  TakeProfitPrice?: number;
+  Amount: number;
+  OrderId: string;
+  Side: string;
+  Currency: string;
+  CreatedAt: string;
+}
+
 // ─── Data Fetchers ─────────────────────────────────────────────
 
 async function fetchNews(limit: number): Promise<NewsItem[]> {
@@ -248,6 +283,38 @@ async function fetchPositions(): Promise<PositionItem[]> {
       }),
     );
     return (result.Items ?? []) as PositionItem[];
+  } catch {
+    return [];
+  }
+}
+
+async function fetchScalpTrades(limit: number): Promise<ScalpTradeItem[]> {
+  try {
+    const result = await client.send(
+      new QueryCommand({
+        TableName: tableName,
+        KeyConditionExpression: "PK = :pk",
+        ExpressionAttributeValues: { ":pk": "TRADE#SCALP" },
+        ScanIndexForward: false,
+        Limit: limit,
+      }),
+    );
+    return (result.Items ?? []) as ScalpTradeItem[];
+  } catch {
+    return [];
+  }
+}
+
+async function fetchActiveStopLosses(): Promise<StopLossItem[]> {
+  try {
+    const result = await client.send(
+      new QueryCommand({
+        TableName: tableName,
+        KeyConditionExpression: "PK = :pk",
+        ExpressionAttributeValues: { ":pk": "STOPLOSS#ACTIVE" },
+      }),
+    );
+    return (result.Items ?? []) as StopLossItem[];
   } catch {
     return [];
   }
@@ -576,11 +643,240 @@ function renderTotalAssets(positions: PositionItem[]): void {
   }
 }
 
+function renderScalpTradesTable(trades: ScalpTradeItem[]): void {
+  printHeader(`SCALP TRADE HISTORY (${trades.length} items)`);
+
+  if (trades.length === 0) {
+    console.log(`  ${c.dim}No scalp trade items found${c.reset}`);
+    return;
+  }
+
+  const cols = [
+    pad(`${c.bold}Date${c.reset}`, 24),
+    pad(`${c.bold}Ticker${c.reset}`, 14),
+    pad(`${c.bold}Side${c.reset}`, 10),
+    pad(`${c.bold}Price${c.reset}`, 14),
+    pad(`${c.bold}StopLoss${c.reset}`, 14),
+    pad(`${c.bold}Profit${c.reset}`, 16),
+    pad(`${c.bold}Status${c.reset}`, 12),
+    pad(`${c.bold}Conf${c.reset}`, 10),
+    pad(`${c.bold}Timeframe${c.reset}`, 12),
+  ];
+  console.log(`  ${cols.join(" │ ")}`);
+  printSeparator();
+
+  let totalProfit = 0;
+  const tradeCount = { buy: 0, sell: 0 };
+
+  for (const trade of trades) {
+    totalProfit += trade.Profit ?? 0;
+    if (trade.Side === "BUY") tradeCount.buy++;
+    else tradeCount.sell++;
+
+    const row = [
+      `  ${pad(formatDate(trade.CreatedAt ?? trade.SK), 20)}`,
+      pad(truncate(trade.Ticker ?? "-", 10), 10),
+      pad(colorSide(trade.Side), 10),
+      pad((trade.Price ?? 0).toFixed(6), 10),
+      pad((trade.StopLossPrice ?? 0).toFixed(6), 10),
+      pad(colorProfit(trade.Profit ?? 0), 16),
+      pad(colorStatus(trade.Status), 12),
+      pad(trade.Confidence != null ? colorConfidence(trade.Confidence) : "-", 10),
+      pad(truncate(trade.EntryTimeframe ?? "-", 8), 8),
+    ];
+    console.log(row.join(" │ "));
+  }
+
+  printSeparator();
+  console.log(
+    `  ${c.bold}Summary:${c.reset}  BUY: ${c.green}${tradeCount.buy}${c.reset}  SELL: ${c.red}${tradeCount.sell}${c.reset}  Total P&L: ${colorProfit(totalProfit)}`,
+  );
+}
+
+function computeScalpTickerPnL(trades: ScalpTradeItem[]): TickerPnL[] {
+  const map = new Map<
+    string,
+    { profits: number[]; profitsJpy: (number | null)[]; buyPrices: number[]; sellPrices: number[] }
+  >();
+
+  for (const trade of trades) {
+    const ticker = trade.Ticker ?? "UNKNOWN";
+    if (!map.has(ticker)) {
+      map.set(ticker, { profits: [], profitsJpy: [], buyPrices: [], sellPrices: [] });
+    }
+    const entry = map.get(ticker);
+    if (!entry) continue;
+
+    if (trade.Side === "SELL" && trade.Profit !== 0) {
+      entry.profits.push(trade.ProfitJPY ?? trade.Profit);
+      entry.profitsJpy.push(trade.ProfitJPY ?? null);
+    }
+    if (trade.Side === "BUY") {
+      entry.buyPrices.push(trade.Price ?? 0);
+    } else {
+      entry.sellPrices.push(trade.Price ?? 0);
+    }
+  }
+
+  const results: TickerPnL[] = [];
+  for (const [ticker, data] of map) {
+    const totalProfit = data.profits.reduce((sum, p) => sum + p, 0);
+    const hasJpy = data.profitsJpy.some((p) => p !== null);
+    const totalProfitJPY = hasJpy
+      ? data.profitsJpy.reduce((sum, p) => (sum ?? 0) + (p ?? 0), 0 as number)
+      : null;
+    const winCount = data.profits.filter((p) => p > 0).length;
+    const lossCount = data.profits.filter((p) => p < 0).length;
+    const avgBuyPrice =
+      data.buyPrices.length > 0
+        ? data.buyPrices.reduce((s, p) => s + p, 0) / data.buyPrices.length
+        : 0;
+    const avgSellPrice =
+      data.sellPrices.length > 0
+        ? data.sellPrices.reduce((s, p) => s + p, 0) / data.sellPrices.length
+        : 0;
+    results.push({
+      ticker,
+      totalProfit,
+      totalProfitJPY,
+      tradeCount: data.buyPrices.length + data.sellPrices.length,
+      winCount,
+      lossCount,
+      avgBuyPrice,
+      avgSellPrice,
+    });
+  }
+
+  results.sort((a, b) => b.totalProfit - a.totalProfit);
+  return results;
+}
+
+function renderScalpPnLSummary(trades: ScalpTradeItem[]): void {
+  printHeader("SCALP P&L SUMMARY");
+
+  if (trades.length === 0) {
+    console.log(`  ${c.dim}No scalp trade data available${c.reset}`);
+    return;
+  }
+
+  const tickerPnL = computeScalpTickerPnL(trades);
+  const anyJpy = tickerPnL.some((p) => p.totalProfitJPY !== null);
+
+  const cols = [
+    pad(`${c.bold}Ticker${c.reset}`, 16),
+    pad(`${c.bold}Trades${c.reset}`, 10),
+    pad(`${c.bold}Wins${c.reset}`, 8),
+    pad(`${c.bold}Losses${c.reset}`, 10),
+    pad(`${c.bold}Win Rate${c.reset}`, 12),
+    pad(`${c.bold}Avg Buy${c.reset}`, 14),
+    pad(`${c.bold}Avg Sell${c.reset}`, 14),
+    pad(`${c.bold}P&L${c.reset}`, 16),
+    ...(anyJpy ? [pad(`${c.bold}P&L (JPY)${c.reset}`, 18)] : []),
+  ];
+  console.log(`  ${cols.join(" │ ")}`);
+  printSeparator();
+
+  let grandTotalProfit = 0;
+  let grandTotalProfitJPY = 0;
+  let grandWins = 0;
+  let grandLosses = 0;
+
+  for (const pnl of tickerPnL) {
+    grandTotalProfit += pnl.totalProfit;
+    grandTotalProfitJPY += pnl.totalProfitJPY ?? pnl.totalProfit;
+    grandWins += pnl.winCount;
+    grandLosses += pnl.lossCount;
+
+    const totalRoundTrips = pnl.winCount + pnl.lossCount;
+    const winRate = totalRoundTrips > 0 ? (pnl.winCount / totalRoundTrips) * 100 : 0;
+    const winRateStr = totalRoundTrips > 0 ? `${winRate.toFixed(0)}%` : "-";
+    const winRateColor =
+      winRate >= 50
+        ? `${c.green}${winRateStr}${c.reset}`
+        : winRate > 0
+          ? `${c.red}${winRateStr}${c.reset}`
+          : `${c.dim}${winRateStr}${c.reset}`;
+
+    const jpyCol = anyJpy
+      ? [
+          pad(
+            pnl.totalProfitJPY !== null
+              ? `¥${pnl.totalProfitJPY > 0 ? "+" : ""}${pnl.totalProfitJPY.toLocaleString("ja-JP")}`
+              : `${c.dim}-${c.reset}`,
+            18,
+          ),
+        ]
+      : [];
+
+    const row = [
+      `  ${pad(`${c.cyan}${pnl.ticker}${c.reset}`, 16)}`,
+      pad(String(pnl.tradeCount), 6),
+      pad(`${c.green}${pnl.winCount}${c.reset}`, 8),
+      pad(`${c.red}${pnl.lossCount}${c.reset}`, 10),
+      pad(winRateColor, 12),
+      pad(pnl.avgBuyPrice > 0 ? pnl.avgBuyPrice.toFixed(6) : "-", 10),
+      pad(pnl.avgSellPrice > 0 ? pnl.avgSellPrice.toFixed(6) : "-", 10),
+      pad(colorProfit(pnl.totalProfit), 16),
+      ...jpyCol,
+    ];
+    console.log(row.join(" │ "));
+  }
+
+  printSeparator();
+  const grandTotal = grandWins + grandLosses;
+  const grandWinRate = grandTotal > 0 ? (grandWins / grandTotal) * 100 : 0;
+  const grandWinRateStr = grandTotal > 0 ? `${grandWinRate.toFixed(0)}%` : "-";
+  const jpySuffix = anyJpy
+    ? `  │  ${c.bold}Total P&L (JPY):${c.reset} ${colorProfit(grandTotalProfitJPY)}`
+    : "";
+  console.log(
+    `  ${c.bold}Total P&L:${c.reset} ${colorProfit(grandTotalProfit)}${jpySuffix}  │  ${c.bold}Win Rate:${c.reset} ${grandWinRateStr} (${grandWins}W / ${grandLosses}L)`,
+  );
+}
+
+function renderActiveStopLosses(stopLosses: StopLossItem[]): void {
+  printHeader(`ACTIVE STOP-LOSSES (${stopLosses.length} items)`);
+
+  if (stopLosses.length === 0) {
+    console.log(`  ${c.dim}No active stop-losses${c.reset}`);
+    return;
+  }
+
+  const cols = [
+    pad(`${c.bold}Ticker${c.reset}`, 14),
+    pad(`${c.bold}Entry Price${c.reset}`, 16),
+    pad(`${c.bold}Stop-Loss${c.reset}`, 16),
+    pad(`${c.bold}Take-Profit${c.reset}`, 16),
+    pad(`${c.bold}Amount${c.reset}`, 12),
+    pad(`${c.bold}Currency${c.reset}`, 12),
+    pad(`${c.bold}Created${c.reset}`, 22),
+  ];
+  console.log(`  ${cols.join(" │ ")}`);
+  printSeparator();
+
+  for (const sl of stopLosses) {
+    const distancePct = (((sl.StopLossPrice - sl.EntryPrice) / sl.EntryPrice) * 100).toFixed(2);
+
+    const row = [
+      `  ${pad(`${c.cyan}${sl.Ticker}${c.reset}`, 14)}`,
+      pad((sl.EntryPrice ?? 0).toFixed(4), 12),
+      pad(`${(sl.StopLossPrice ?? 0).toFixed(4)} (${distancePct}%)`, 16),
+      pad(sl.TakeProfitPrice != null ? sl.TakeProfitPrice.toFixed(4) : "-", 12),
+      pad((sl.Amount ?? 0).toFixed(4), 8),
+      pad(sl.Currency ?? "-", 8),
+      pad(formatDate(sl.CreatedAt), 18),
+    ];
+    console.log(row.join(" │ "));
+  }
+}
+
 function renderSummary(
   news: NewsItem[],
   trades: TradeItem[],
   state: StateItem | null,
   positions: PositionItem[],
+  scalpTrades: ScalpTradeItem[],
+  activeStopLosses: StopLossItem[],
 ): void {
   printHeader("DASHBOARD SUMMARY");
 
@@ -592,6 +888,8 @@ function renderSummary(
   console.log(`  ${c.bold}News Items:${c.reset}    ${news.length}`);
   console.log(`  ${c.bold}Trade Items:${c.reset}   ${trades.length}`);
   console.log(`  ${c.bold}Positions:${c.reset}     ${positions.length}`);
+  console.log(`  ${c.bold}Scalp Trades:${c.reset}   ${scalpTrades.length}`);
+  console.log(`  ${c.bold}Active SL:${c.reset}      ${activeStopLosses.length}`);
   console.log(`  ${c.bold}System State:${c.reset}  ${state ? "Active" : "No data"}`);
 }
 
@@ -611,20 +909,25 @@ async function main(): Promise<void> {
   );
 
   try {
-    const [news, trades, state, positions] = await Promise.all([
+    const [news, trades, state, positions, scalpTrades, activeStopLosses] = await Promise.all([
       fetchNews(limit),
       fetchTrades(limit),
       fetchState(),
       fetchPositions(),
+      fetchScalpTrades(limit),
+      fetchActiveStopLosses(),
     ]);
 
-    renderSummary(news, trades, state, positions);
+    renderSummary(news, trades, state, positions, scalpTrades, activeStopLosses);
     renderSystemStatus(state);
     renderNewsTable(news);
     renderTradesTable(trades);
     renderPositionsTable(positions);
     renderProfitSummary(trades);
     renderTotalAssets(positions);
+    renderScalpTradesTable(scalpTrades);
+    renderScalpPnLSummary(scalpTrades);
+    renderActiveStopLosses(activeStopLosses);
 
     console.log(
       `\n${c.dim}Tip: Run with a number to change limit, e.g. \`npm run dashboard -- 100\`${c.reset}\n`,

@@ -25,6 +25,13 @@ export const AppConfigSchema = z.object({
   maxLeverage: z.number().int().min(1).max(20).default(1),
   marginMode: z.enum(["cross", "isolated"]).default("isolated"),
   enableShortSelling: z.boolean().default(false),
+  scalpEnabled: z.boolean().default(false),
+  scalpIntervalMinutes: z.number().positive().default(5),
+  scalpConfidenceThreshold: z.number().min(0).max(1).default(0.75),
+  scalpModelId: z.string().default("openai/gpt-4.1-mini"),
+  scalpMaxPairsPerCycle: z.number().int().min(1).max(12).default(4),
+  scalpStoplossMonitorSeconds: z.number().int().min(10).max(300).default(30),
+  scalpAtrMultiplier: z.number().min(0.5).max(5).default(2.0),
 });
 
 export type RssFeed = z.infer<typeof RssFeedSchema>;

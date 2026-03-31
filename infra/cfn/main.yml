@@ -56,6 +56,35 @@ Parameters:
     Default: "false"
     AllowedValues: ["true", "false"]
     Description: Allow short selling (disabled for Binance Japan spot-only)
+  ScalpEnabled:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+    Description: Enable crypto scalping system
+  ScalpIntervalMinutes:
+    Type: String
+    Default: "5"
+    Description: Scalping analysis interval in minutes
+  ScalpConfidenceThreshold:
+    Type: String
+    Default: "0.75"
+    Description: Minimum confidence for scalp trade execution
+  ScalpModelId:
+    Type: String
+    Default: openai/gpt-4.1-mini
+    Description: AI model for scalping analysis
+  ScalpMaxPairsPerCycle:
+    Type: String
+    Default: "4"
+    Description: Maximum pairs to analyze per scalp cycle
+  ScalpStoplossMonitorSeconds:
+    Type: String
+    Default: "30"
+    Description: Stop-loss check interval in seconds
+  ScalpAtrMultiplier:
+    Type: String
+    Default: "2.0"
+    Description: ATR multiplier for stop-loss distance
 
 Metadata:
   AWS::CloudFormation::Interface:
@@ -79,6 +108,13 @@ Metadata:
         Parameters:
           - GitHubModelId
           - ConfidenceThreshold
+          - ScalpEnabled
+          - ScalpIntervalMinutes
+          - ScalpConfidenceThreshold
+          - ScalpModelId
+          - ScalpMaxPairsPerCycle
+          - ScalpStoplossMonitorSeconds
+          - ScalpAtrMultiplier
       - Label:
           default: Cache (Optional)
         Parameters:
@@ -169,6 +205,13 @@ Resources:
         MaxLeverage: !Ref MaxLeverage
         MarginMode: !Ref MarginMode
         EnableShortSelling: !Ref EnableShortSelling
+        ScalpEnabled: !Ref ScalpEnabled
+        ScalpIntervalMinutes: !Ref ScalpIntervalMinutes
+        ScalpConfidenceThreshold: !Ref ScalpConfidenceThreshold
+        ScalpModelId: !Ref ScalpModelId
+        ScalpMaxPairsPerCycle: !Ref ScalpMaxPairsPerCycle
+        ScalpStoplossMonitorSeconds: !Ref ScalpStoplossMonitorSeconds
+        ScalpAtrMultiplier: !Ref ScalpAtrMultiplier
         VpcSubnetIds: !GetAtt NetworkStack.Outputs.PrivateSubnetIds
         VpcSecurityGroupIds: !GetAtt NetworkStack.Outputs.LambdaSecurityGroupId
         BinanceSecretArn: !GetAtt NetworkStack.Outputs.BinanceSecretArn

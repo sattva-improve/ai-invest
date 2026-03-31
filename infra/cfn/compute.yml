@@ -72,11 +72,41 @@ Parameters:
     Type: String
     Default: ""
     Description: Secrets Manager ARN for Binance API credentials
+  ScalpEnabled:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+    Description: Enable crypto scalping system
+  ScalpIntervalMinutes:
+    Type: String
+    Default: "5"
+    Description: Scalping analysis interval in minutes
+  ScalpConfidenceThreshold:
+    Type: String
+    Default: "0.75"
+    Description: Minimum confidence for scalp trade execution
+  ScalpModelId:
+    Type: String
+    Default: openai/gpt-4.1-mini
+    Description: AI model for scalping analysis
+  ScalpMaxPairsPerCycle:
+    Type: String
+    Default: "4"
+    Description: Maximum pairs to analyze per scalp cycle
+  ScalpStoplossMonitorSeconds:
+    Type: String
+    Default: "30"
+    Description: Stop-loss check interval in seconds
+  ScalpAtrMultiplier:
+    Type: String
+    Default: "2.0"
+    Description: ATR multiplier for stop-loss distance
 
 Conditions:
   IsProd: !Equals [!Ref Environment, prod]
   HasRedis: !Not [!Equals [!Ref RedisUrl, ""]]
   HasBinanceSecret: !Not [!Equals [!Ref BinanceSecretArn, ""]]
+  IsScalpEnabled: !Equals [!Ref ScalpEnabled, "true"]
 
 Resources:
   FetchNewsFunction:
@@ -511,6 +541,142 @@ Resources:
           RoleArn: !Ref EventBridgeRoleArn
           Input: '{"market": "CRYPTO"}'
 
+  ScalpAnalyzeFunction:
+    Type: AWS::Lambda::Function
+    Condition: IsScalpEnabled
+    Properties:
+      FunctionName: !Sub "algo-trade-scalp-analyze-${Environment}"
+      Runtime: nodejs22.x
+      Handler: dist/handlers/scalp-analyze.handler
+      Role: !Ref LambdaRoleArn
+      Code:
+        S3Bucket: !Ref S3Bucket
+        S3Key: !Ref S3Key
+      Timeout: 120
+      MemorySize: 512
+      Environment:
+        Variables:
+          NODE_ENV: !If [IsProd, production, development]
+          DYNAMODB_TABLE_NAME: !Ref DynamoDBTableName
+          DYNAMODB_REGION: !Ref "AWS::Region"
+          GITHUB_TOKEN: !Ref GitHubToken
+          GITHUB_MODEL_ID: !Ref ScalpModelId
+          CONFIDENCE_THRESHOLD: !Ref ScalpConfidenceThreshold
+          PAPER_TRADE: !Ref PaperTrade
+          LOG_LEVEL: !If [IsProd, info, debug]
+          REDIS_URL: !If [HasRedis, !Ref RedisUrl, !Ref "AWS::NoValue"]
+          SCALP_ENABLED: !Ref ScalpEnabled
+          SCALP_INTERVAL_MINUTES: !Ref ScalpIntervalMinutes
+          SCALP_CONFIDENCE_THRESHOLD: !Ref ScalpConfidenceThreshold
+          SCALP_MODEL_ID: !Ref ScalpModelId
+          SCALP_MAX_PAIRS_PER_CYCLE: !Ref ScalpMaxPairsPerCycle
+          SCALP_STOPLOSS_MONITOR_SECONDS: !Ref ScalpStoplossMonitorSeconds
+          SCALP_ATR_MULTIPLIER: !Ref ScalpAtrMultiplier
+          EXCHANGE_API_KEY: !If [HasBinanceSecret, !Sub "{{resolve:secretsmanager:${BinanceSecretArn}:SecretString:apiKey}}", !Ref "AWS::NoValue"]
+          EXCHANGE_SECRET: !If [HasBinanceSecret, !Sub "{{resolve:secretsmanager:${BinanceSecretArn}:SecretString:secret}}", !Ref "AWS::NoValue"]
+          MAX_LEVERAGE: !Ref MaxLeverage
+          MARGIN_MODE: !Ref MarginMode
+          ENABLE_SHORT_SELLING: !Ref EnableShortSelling
+      VpcConfig:
+        SubnetIds: !Ref VpcSubnetIds
+        SecurityGroupIds: !Ref VpcSecurityGroupIds
+      TracingConfig:
+        Mode: Active
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectTag
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: CostCenter
+          Value: algo-trade
+        - Key: Service
+          Value: scalping-bot
+
+  StopLossMonitorFunction:
+    Type: AWS::Lambda::Function
+    Condition: IsScalpEnabled
+    Properties:
+      FunctionName: !Sub "algo-trade-stop-loss-monitor-${Environment}"
+      Runtime: nodejs22.x
+      Handler: dist/handlers/stop-loss-monitor.handler
+      Role: !Ref LambdaRoleArn
+      Code:
+        S3Bucket: !Ref S3Bucket
+        S3Key: !Ref S3Key
+      Timeout: 30
+      MemorySize: 256
+      Environment:
+        Variables:
+          NODE_ENV: !If [IsProd, production, development]
+          DYNAMODB_TABLE_NAME: !Ref DynamoDBTableName
+          DYNAMODB_REGION: !Ref "AWS::Region"
+          PAPER_TRADE: !Ref PaperTrade
+          LOG_LEVEL: !If [IsProd, info, debug]
+          REDIS_URL: !If [HasRedis, !Ref RedisUrl, !Ref "AWS::NoValue"]
+          SCALP_ENABLED: !Ref ScalpEnabled
+          SCALP_STOPLOSS_MONITOR_SECONDS: !Ref ScalpStoplossMonitorSeconds
+          SCALP_ATR_MULTIPLIER: !Ref ScalpAtrMultiplier
+          EXCHANGE_API_KEY: !If [HasBinanceSecret, !Sub "{{resolve:secretsmanager:${BinanceSecretArn}:SecretString:apiKey}}", !Ref "AWS::NoValue"]
+          EXCHANGE_SECRET: !If [HasBinanceSecret, !Sub "{{resolve:secretsmanager:${BinanceSecretArn}:SecretString:secret}}", !Ref "AWS::NoValue"]
+      VpcConfig:
+        SubnetIds: !Ref VpcSubnetIds
+        SecurityGroupIds: !Ref VpcSecurityGroupIds
+      TracingConfig:
+        Mode: Active
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectTag
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: CostCenter
+          Value: algo-trade
+        - Key: Service
+          Value: scalping-bot
+
+  ScalpAnalyzeRule:
+    Type: AWS::Events::Rule
+    Condition: IsScalpEnabled
+    Properties:
+      Name: !Sub "algo-trade-scalp-analyze-${Environment}"
+      Description: "Scalp analysis trigger every 5 minutes"
+      ScheduleExpression: "rate(5 minutes)"
+      State: !If [IsProd, ENABLED, DISABLED]
+      Targets:
+        - Id: trigger-scalp-analyze
+          Arn: !GetAtt ScalpAnalyzeFunction.Arn
+          RoleArn: !Ref EventBridgeRoleArn
+
+  ScalpAnalyzePermission:
+    Type: AWS::Lambda::Permission
+    Condition: IsScalpEnabled
+    Properties:
+      FunctionName: !Ref ScalpAnalyzeFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt ScalpAnalyzeRule.Arn
+
+  StopLossMonitorRule:
+    Type: AWS::Events::Rule
+    Condition: IsScalpEnabled
+    Properties:
+      Name: !Sub "algo-trade-stop-loss-monitor-${Environment}"
+      Description: "Stop-loss monitor trigger every 1 minute"
+      ScheduleExpression: "rate(1 minute)"
+      State: !If [IsProd, ENABLED, DISABLED]
+      Targets:
+        - Id: trigger-stop-loss-monitor
+          Arn: !GetAtt StopLossMonitorFunction.Arn
+          RoleArn: !Ref EventBridgeRoleArn
+
+  StopLossMonitorPermission:
+    Type: AWS::Lambda::Permission
+    Condition: IsScalpEnabled
+    Properties:
+      FunctionName: !Ref StopLossMonitorFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt StopLossMonitorRule.Arn
+
 Outputs:
   FetchNewsFunctionArn:
     Value: !GetAtt FetchNewsFunction.Arn
@@ -528,3 +694,9 @@ Outputs:
     Value: !GetAtt TradingPipeline.Arn
     Export:
       Name: !Sub "${AWS::StackName}-PipelineArn"
+  ScalpAnalyzeFunctionArn:
+    Condition: IsScalpEnabled
+    Value: !GetAtt ScalpAnalyzeFunction.Arn
+  StopLossMonitorFunctionArn:
+    Condition: IsScalpEnabled
+    Value: !GetAtt StopLossMonitorFunction.Arn
