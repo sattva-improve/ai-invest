@@ -244,6 +244,12 @@ Resources:
               - states:StartExecution
             Resource:
               - !Sub "arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:algo-trade-*"
+          - Sid: InvokeLambdas
+            Effect: Allow
+            Action:
+              - lambda:InvokeFunction
+            Resource:
+              - !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:algo-trade-*"
 
   # ============================================================
   # CI/CD Deploy Role (GitHub Actions)

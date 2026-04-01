@@ -7,7 +7,6 @@ const CACHE_TTL = 60;
 
 export interface TimeframeData {
   timeframe: "1m" | "5m" | "15m" | "1h" | "1d";
-  ohlcv: number[][];
   indicators: {
     rsi?: number;
     sma20?: number;
@@ -159,7 +158,6 @@ export async function fetchMultiTimeframeData(symbol: string): Promise<MultiTime
 
       const timeframeData: TimeframeData = {
         timeframe,
-        ohlcv,
         indicators: {
           rsi,
           sma20,

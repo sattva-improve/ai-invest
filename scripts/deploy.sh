@@ -76,6 +76,9 @@ echo "--- Uploading Lambda package ---"
 aws s3 cp /tmp/lambda-deployment.zip "s3://${LAMBDA_S3_BUCKET}/${LAMBDA_S3_KEY}" \
   --region "$AWS_REGION"
 
+echo "--- Restoring development dependencies ---"
+npm ci
+
 echo "--- Deploying CloudFormation stack: ${STACK_NAME} ---"
 aws cloudformation deploy \
   --template-file "$CFN_DIR/main.yml" \

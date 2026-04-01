@@ -252,12 +252,15 @@ export async function scalpAnalyzeHandler(config: AppConfig): Promise<ScalpAnaly
   }
 
   const pairs = config.tradingPairs.filter((pair) => pair.enabled && pair.assetType === "crypto");
-  const marketData = await Promise.all(
-    pairs.map(async (pair) => fetchMultiTimeframeData(pair.symbol)),
-  );
-  const availableData = marketData.filter(
-    (item): item is NonNullable<typeof item> => item !== null,
-  );
+  const availableData: NonNullable<Awaited<ReturnType<typeof fetchMultiTimeframeData>>>[] = [];
+
+  for (const pair of pairs) {
+    const data = await fetchMultiTimeframeData(pair.symbol);
+    if (data) {
+      availableData.push(data);
+    }
+  }
+
   const filteredPairs = filterByTechnicalSignals(availableData, config.scalpMaxPairsPerCycle);
   const positions = await getAllPositions();
 
