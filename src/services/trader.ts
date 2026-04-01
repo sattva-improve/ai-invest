@@ -20,6 +20,20 @@ interface ProfitInfo {
   conversionRate?: number;
 }
 
+function getAmountStep(
+  market: ReturnType<InstanceType<typeof ccxt.Exchange>["market"]>,
+): number | null {
+  const precisionAmount = market.precision?.amount;
+  if (
+    typeof precisionAmount === "number" &&
+    Number.isFinite(precisionAmount) &&
+    precisionAmount > 0
+  ) {
+    return precisionAmount;
+  }
+  return null;
+}
+
 function executePaperTrade(request: OrderRequest): OrderResult {
   const executedPrice = request.price ?? 0;
 
@@ -71,7 +85,7 @@ async function executeLiveTrade(request: OrderRequest): Promise<OrderResult> {
   await exchange.loadMarkets();
 
   const market = exchange.market(request.symbol);
-  const normalizedAmount = Number(exchange.amountToPrecision(request.symbol, request.amount));
+  let normalizedAmount = Number(exchange.amountToPrecision(request.symbol, request.amount));
   const normalizedPrice =
     typeof request.price === "number"
       ? Number(exchange.priceToPrecision(request.symbol, request.price))
@@ -82,15 +96,60 @@ async function executeLiveTrade(request: OrderRequest): Promise<OrderResult> {
   }
 
   const minAmount = market.limits?.amount?.min;
+  const effectivePrice = normalizedPrice ?? market.info?.lastPrice;
+  const minCost = market.limits?.cost?.min;
+
+  if (
+    request.side === "buy" &&
+    typeof minCost === "number" &&
+    typeof effectivePrice === "number" &&
+    Number.isFinite(effectivePrice) &&
+    effectivePrice > 0
+  ) {
+    let minimumBuyAmount = Number(
+      exchange.amountToPrecision(request.symbol, minCost / effectivePrice),
+    );
+    const amountStep = getAmountStep(market);
+
+    if (
+      amountStep != null &&
+      Number.isFinite(minimumBuyAmount) &&
+      minimumBuyAmount > 0 &&
+      minimumBuyAmount * effectivePrice < minCost
+    ) {
+      while (minimumBuyAmount * effectivePrice < minCost) {
+        minimumBuyAmount = Number(
+          exchange.amountToPrecision(request.symbol, minimumBuyAmount + amountStep),
+        );
+      }
+    }
+
+    if (minimumBuyAmount > normalizedAmount) {
+      log.info(
+        {
+          symbol: request.symbol,
+          originalAmount: normalizedAmount,
+          adjustedAmount: minimumBuyAmount,
+          minCost,
+          effectivePrice,
+        },
+        "Adjusted BUY amount to satisfy exchange minimum notional",
+      );
+      normalizedAmount = minimumBuyAmount;
+    }
+  }
+
   if (typeof minAmount === "number" && normalizedAmount < minAmount) {
     throw new Error(
       `Order amount ${normalizedAmount} is below minimum ${minAmount} for ${request.symbol}`,
     );
   }
 
-  const effectivePrice = normalizedPrice ?? market.info?.lastPrice;
-  const estimatedCost = effectivePrice ? normalizedAmount * Number(effectivePrice) : undefined;
-  const minCost = market.limits?.cost?.min;
+  const estimatedCost =
+    typeof effectivePrice === "number" && Number.isFinite(effectivePrice)
+      ? normalizedAmount * effectivePrice
+      : undefined;
+
   if (
     typeof minCost === "number" &&
     typeof estimatedCost === "number" &&
