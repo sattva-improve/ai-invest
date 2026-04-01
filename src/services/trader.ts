@@ -68,6 +68,39 @@ async function executeLiveTrade(request: OrderRequest): Promise<OrderResult> {
   const exchange = await getExchangeInstance();
 
   await exchange.loadTimeDifference();
+  await exchange.loadMarkets();
+
+  const market = exchange.market(request.symbol);
+  const normalizedAmount = Number(exchange.amountToPrecision(request.symbol, request.amount));
+  const normalizedPrice =
+    typeof request.price === "number"
+      ? Number(exchange.priceToPrecision(request.symbol, request.price))
+      : undefined;
+
+  if (!Number.isFinite(normalizedAmount) || normalizedAmount <= 0) {
+    throw new Error(`Invalid normalized amount for ${request.symbol}: ${normalizedAmount}`);
+  }
+
+  const minAmount = market.limits?.amount?.min;
+  if (typeof minAmount === "number" && normalizedAmount < minAmount) {
+    throw new Error(
+      `Order amount ${normalizedAmount} is below minimum ${minAmount} for ${request.symbol}`,
+    );
+  }
+
+  const effectivePrice = normalizedPrice ?? market.info?.lastPrice;
+  const estimatedCost = effectivePrice ? normalizedAmount * Number(effectivePrice) : undefined;
+  const minCost = market.limits?.cost?.min;
+  if (
+    typeof minCost === "number" &&
+    typeof estimatedCost === "number" &&
+    Number.isFinite(estimatedCost) &&
+    estimatedCost < minCost
+  ) {
+    throw new Error(
+      `Order notional ${estimatedCost} is below minimum ${minCost} for ${request.symbol}`,
+    );
+  }
 
   const balance = await exchange.fetchBalance();
   log.info({ free: balance.free, symbol: request.symbol }, "Exchange balance fetched");
@@ -76,8 +109,8 @@ async function executeLiveTrade(request: OrderRequest): Promise<OrderResult> {
     request.symbol,
     request.type,
     request.side,
-    request.amount,
-    request.price,
+    normalizedAmount,
+    normalizedPrice,
   );
 
   const executedPrice =
@@ -88,7 +121,7 @@ async function executeLiveTrade(request: OrderRequest): Promise<OrderResult> {
     symbol: request.symbol,
     side: request.side,
     positionSide: request.positionSide,
-    amount: request.amount,
+    amount: normalizedAmount,
     executedPrice,
     leverage: request.leverage,
     status: order.status as string,
