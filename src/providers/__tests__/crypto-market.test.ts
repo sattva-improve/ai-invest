@@ -1,9 +1,13 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
 const mockFetchOHLCV = vi.fn();
+const mockFetchTicker = vi.fn();
 
 vi.mock("ccxt", () => ({
   default: {
     binance: vi.fn().mockImplementation(() => ({
       fetchOHLCV: mockFetchOHLCV,
+      fetchTicker: mockFetchTicker,
     })),
   },
 }));
@@ -23,7 +27,7 @@ vi.mock("../../config/env.js", () => ({
   },
 }));
 
-import { getCryptoMarketData } from "../crypto-market.js";
+import { getCryptoMarketData, getCryptoSpotPrice } from "../crypto-market.js";
 
 // Generate enough OHLCV data for RSI calculation (need > 15 candles)
 function generateOhlcv(count: number, basePrice = 50000): number[][] {
@@ -41,6 +45,7 @@ describe("getCryptoMarketData", () => {
     vi.clearAllMocks();
     mockCacheGet.mockResolvedValue(null);
     mockCacheSet.mockResolvedValue(undefined);
+    mockFetchTicker.mockResolvedValue({ last: 51000, close: 50900, timestamp: Date.now() });
   });
 
   it("returns MarketData with correct symbol/price/RSI", async () => {
@@ -103,5 +108,31 @@ describe("getCryptoMarketData", () => {
 
     expect(mockCacheSet).toHaveBeenCalledTimes(1);
     expect(mockCacheSet.mock.calls[0][0]).toBe("market:crypto:ETH/BTC");
+  });
+
+  it("returns spot price from ticker endpoint", async () => {
+    const result = await getCryptoSpotPrice("ETH/BTC");
+
+    expect(result).toBe(51000);
+    expect(mockFetchTicker).toHaveBeenCalledWith("ETH/BTC");
+  });
+
+  it("returns cached spot price when available", async () => {
+    mockCacheGet.mockImplementation(async (key: string) =>
+      key === "market:crypto:spot:ETH/BTC" ? 52000 : null,
+    );
+
+    const result = await getCryptoSpotPrice("ETH/BTC");
+
+    expect(result).toBe(52000);
+    expect(mockFetchTicker).not.toHaveBeenCalled();
+  });
+
+  it("returns null when ticker endpoint has no usable price", async () => {
+    mockFetchTicker.mockResolvedValue({ last: undefined, close: 0 });
+
+    const result = await getCryptoSpotPrice("ETH/BTC");
+
+    expect(result).toBeNull();
   });
 });

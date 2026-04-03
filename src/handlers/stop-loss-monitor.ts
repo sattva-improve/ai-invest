@@ -4,7 +4,7 @@ import { RSS_FEEDS } from "../config/rss-feeds.js";
 import { TRADING_PAIRS } from "../config/trading-pairs.js";
 import { convertToJpy, getBtcJpyRate, getQuoteCurrency } from "../lib/currency-converter.js";
 import { logger } from "../lib/logger.js";
-import { getCryptoMarketData } from "../providers/crypto-market.js";
+import { getCryptoSpotPrice } from "../providers/crypto-market.js";
 import { getPosition } from "../repositories/position-repository.js";
 import {
   getAllActiveStopLosses,
@@ -104,8 +104,7 @@ export async function stopLossMonitorHandler(
         continue;
       }
 
-      const marketData = await getCryptoMarketData(stop.Ticker);
-      const currentPrice = marketData?.price ?? 0;
+      const currentPrice = (await getCryptoSpotPrice(stop.Ticker)) ?? 0;
       if (currentPrice <= 0) {
         continue;
       }

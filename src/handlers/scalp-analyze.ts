@@ -14,7 +14,7 @@ import {
 import type { InvestmentDecision } from "../schemas/ai.js";
 import { type AppConfig, AppConfigSchema } from "../schemas/config.js";
 import type { OrderRequest } from "../schemas/trade.js";
-import { analyzeScalp } from "../services/scalp-analyzer.js";
+import { analyzeScalp, isDailyTokenQuotaError } from "../services/scalp-analyzer.js";
 import { filterByTechnicalSignals } from "../services/scalp-signal-filter.js";
 import { executeTrade } from "../services/trader.js";
 
@@ -48,6 +48,15 @@ function toInvestmentDecision(
     leverage: 1,
     promptVersion: "scalp-v1",
   };
+}
+
+function isRetryExhaustedError(error: unknown): boolean {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+
+  const candidate = error as { name?: string; reason?: string };
+  return candidate.name === "AI_RetryError" || candidate.reason === "maxRetriesExceeded";
 }
 
 async function calculateBuyAmount(
@@ -345,6 +354,14 @@ export async function scalpAnalyzeHandler(config: AppConfig): Promise<ScalpAnaly
     } catch (error) {
       errors += 1;
       log.error({ error, symbol: pair.symbol }, "Failed to process scalp analysis pair");
+
+      if (isDailyTokenQuotaError(error) || isRetryExhaustedError(error)) {
+        log.warn(
+          { symbol: pair.symbol },
+          "GitHub Models API quota exhausted — stopping remaining scalp pairs",
+        );
+        break;
+      }
     }
   }
 

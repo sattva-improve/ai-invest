@@ -94,30 +94,61 @@ function toSearchableText(value: unknown): string {
   return parts.join(" ").toLowerCase();
 }
 
-function isDailyTokenQuotaError(err: unknown): boolean {
+export function isDailyTokenQuotaError(err: unknown): boolean {
   try {
     const serialized = JSON.stringify(err).toLowerCase();
-    if (serialized.includes("too many tokens per day")) {
+    if (
+      serialized.includes("too many tokens per day") ||
+      serialized.includes("ratelimitreached") ||
+      serialized.includes("userbyday")
+    ) {
       return true;
     }
   } catch {}
 
   const text = toSearchableText(err);
-  if (text.includes("too many tokens per day")) {
+  if (
+    text.includes("too many tokens per day") ||
+    text.includes("rate limit reached") ||
+    text.includes("ratelimitreached") ||
+    text.includes("userbyday") ||
+    text.includes("x-ratelimit-type userbyday")
+  ) {
     return true;
   }
 
   const msg = String(err).toLowerCase();
-  if (msg.includes("too many tokens per day")) {
+  if (
+    msg.includes("too many tokens per day") ||
+    msg.includes("rate limit reached") ||
+    msg.includes("ratelimitreached") ||
+    msg.includes("userbyday")
+  ) {
     return true;
   }
 
   if (err && typeof err === "object" && "data" in err) {
     try {
-      const data = (err as { data?: { message?: string } }).data;
-      return String(data?.message ?? "")
-        .toLowerCase()
-        .includes("too many tokens per day");
+      const data = (
+        err as {
+          data?: {
+            message?: string;
+            error?: { code?: string; details?: Array<{ metadata?: { quotaScope?: string } }> };
+          };
+        }
+      ).data;
+      const message = String(data?.message ?? "").toLowerCase();
+      const errorCode = String(data?.error?.code ?? "").toLowerCase();
+      const quotaScope = String(
+        data?.error?.details?.[0]?.metadata?.quotaScope ?? "",
+      ).toLowerCase();
+
+      return (
+        message.includes("too many tokens per day") ||
+        message.includes("rate limit reached") ||
+        errorCode.includes("ratelimitreached") ||
+        quotaScope.includes("userbyday")
+      );
     } catch {
       return false;
     }
@@ -255,6 +286,10 @@ export async function analyzeScalp(options: AnalyzeScalpOptions): Promise<ScalpD
     }
   });
 }
+
+export const __testables = {
+  isDailyTokenQuotaError,
+};
 
 function buildScalpPrompt(options: AnalyzeScalpOptions, positions: PromptPosition[]): string {
   const availablePairs = TRADING_PAIRS.filter((pair) => pair.enabled)

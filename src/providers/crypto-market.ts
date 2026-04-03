@@ -5,6 +5,36 @@ import { logger } from "../lib/logger.js";
 import { type MarketData, MarketDataSchema } from "../schemas/market.js";
 
 const CACHE_TTL = 300; // 5 minutes
+const SPOT_PRICE_CACHE_TTL = 30;
+
+type SupportedExchange = {
+  fetchOHLCV(
+    symbol: string,
+    timeframe?: string,
+    since?: number,
+    limit?: number,
+  ): Promise<number[][]>;
+  fetchTicker(
+    symbol: string,
+  ): Promise<{ last?: number; close?: number; baseVolume?: number; timestamp?: number }>;
+};
+
+type ExchangeConstructor = new (options: { enableRateLimit: boolean }) => SupportedExchange;
+
+function createExchange(): SupportedExchange {
+  const exchangeId = env.EXCHANGE_ID ?? "binance";
+  const ExchangeClass = Reflect.get(ccxt as Record<string, unknown>, exchangeId);
+
+  if (typeof ExchangeClass !== "function") {
+    throw new Error(`Exchange '${exchangeId}' not found in ccxt`);
+  }
+
+  return new (ExchangeClass as ExchangeConstructor)({ enableRateLimit: true });
+}
+
+function getExchangeId(): string {
+  return env.EXCHANGE_ID ?? "binance";
+}
 
 function calculateRsi(ohlcv: number[][], period = 14): number | undefined {
   if (ohlcv.length < period + 1) return undefined;
@@ -74,14 +104,9 @@ export async function getCryptoMarketData(symbol: string): Promise<MarketData | 
   }
 
   try {
-    const exchangeId = env.EXCHANGE_ID ?? "binance";
-    // biome-ignore lint/suspicious/noExplicitAny: ccxt dynamic exchange instantiation
-    const ExchangeClass = (ccxt as any)[exchangeId];
-    if (!ExchangeClass) {
-      throw new Error(`Exchange '${exchangeId}' not found in ccxt`);
-    }
-    const exchange = new ExchangeClass({ enableRateLimit: true });
-    const ohlcv = (await exchange.fetchOHLCV(symbol, "1h", undefined, 100)) as number[][];
+    const exchangeId = getExchangeId();
+    const exchange = createExchange();
+    const ohlcv: number[][] = await exchange.fetchOHLCV(symbol, "1h", undefined, 100);
     if (!ohlcv || ohlcv.length === 0) return null;
 
     const latest = ohlcv[ohlcv.length - 1];
@@ -116,6 +141,33 @@ export async function getCryptoMarketData(symbol: string): Promise<MarketData | 
     return data;
   } catch (error) {
     logger.warn({ error, symbol }, "Failed to fetch crypto market data");
+    return null;
+  }
+}
+
+export async function getCryptoSpotPrice(symbol: string): Promise<number | null> {
+  const cacheKey = `market:crypto:spot:${symbol}`;
+  const cached = await cacheGet<number>(cacheKey);
+
+  if (typeof cached === "number" && cached > 0) {
+    logger.debug({ symbol, price: cached }, "Crypto spot price from cache");
+    return cached;
+  }
+
+  try {
+    const exchange = createExchange();
+    const ticker = await exchange.fetchTicker(symbol);
+    const price = ticker.last ?? ticker.close;
+
+    if (typeof price !== "number" || price <= 0) {
+      return null;
+    }
+
+    await cacheSet(cacheKey, price, SPOT_PRICE_CACHE_TTL);
+    logger.info({ symbol, price }, "Crypto spot price fetched");
+    return price;
+  } catch (error) {
+    logger.warn({ error, symbol }, "Failed to fetch crypto spot price");
     return null;
   }
 }

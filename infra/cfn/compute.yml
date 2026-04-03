@@ -603,8 +603,8 @@ Resources:
       Code:
         S3Bucket: !Ref S3Bucket
         S3Key: !Ref S3Key
-      Timeout: 30
-      MemorySize: 256
+      Timeout: 60
+      MemorySize: 1024
       Environment:
         Variables:
           NODE_ENV: !If [IsProd, production, development]
